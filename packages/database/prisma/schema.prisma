@@ -1,0 +1,580 @@
+// AlphaRadar — Prisma schema
+//
+// Authoritative sources:
+//   docs/spec/02-MVP-TECHNICAL-SPECIFICATION.md §7  (base schema)
+//   docs/spec/09-INFRASTRUCTURE-DECISION.md §7      (IngestionCheckpoint,
+//                                                     scoreInputs/scoringVersion,
+//                                                     Alert.suppressedReason/targetChatId,
+//                                                     nullable Alert.userId,
+//                                                     nullable User.email/passwordHash)
+//   docs/decisions/0004-telegram-first-identity.md  (nullable User.email/passwordHash)
+//
+// Enum value sets for OpportunityType, ActionProfile, OpportunityStatus,
+// Urgency, RiskLevel, VerificationStatus, SourceType and WalletSignalType
+// mirror packages/types/src/*.ts. Prisma's schema DSL cannot import those
+// definitions, so the two must be kept in sync by hand.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Supabase requires two connection strings: DATABASE_URL is the pooled
+// (pgBouncer, port 6543) connection the application uses; directUrl is the
+// direct (port 5432) connection Prisma Migrate needs because pgBouncer's
+// transaction pooling mode does not support migrations. Mixing these up
+// produces migration failures that do not clearly point at the cause.
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+/// 01-PROJECT-CONSTITUTION.md §4 — MVP opportunity types. Do not add more
+/// without a concrete MVP requirement.
+enum OpportunityType {
+  NFT_MINT
+  NFT_WHITELIST
+  FREE_MINT
+  RAFFLE
+  TOKEN_LAUNCH
+  MEMECOIN
+  UTILITY_TOKEN
+  AIRDROP
+  TESTNET
+  DEFI
+}
+
+/// 01-PROJECT-CONSTITUTION.md §5 — action profile is independent of type.
+enum ActionProfile {
+  MINT
+  QUALIFY
+  TRADE_RESEARCH
+  CHECK_ELIGIBILITY
+  PARTICIPATE
+  RESEARCH
+}
+
+/// 02-MVP-TECHNICAL-SPECIFICATION.md §10 — explicit lifecycle state.
+enum OpportunityStatus {
+  DETECTED
+  VERIFYING
+  ACTIVE
+  UPCOMING
+  EXPIRED
+  REJECTED
+  COMPLETED
+}
+
+/// 02-MVP-TECHNICAL-SPECIFICATION.md §12 — suggested urgency levels.
+enum Urgency {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+}
+
+/// 01-PROJECT-CONSTITUTION.md §8 and 08-ENGINEERING-REVIEW §4.1 — UNKNOWN is
+/// a first-class value, not a fallback. socialRisk/liquidityRisk stay
+/// UNKNOWN for the whole MVP per docs/decisions/0006.
+enum RiskLevel {
+  UNKNOWN
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+/// 01-PROJECT-CONSTITUTION.md §14 — external links are untrusted until verified.
+enum VerificationStatus {
+  OFFICIAL
+  LIKELY_OFFICIAL
+  UNVERIFIED
+  SUSPICIOUS
+}
+
+/// 01-PROJECT-CONSTITUTION.md §8 — exact match, do not add values.
+enum EvidenceType {
+  FACT
+  INFERENCE
+  AI_INTERPRETATION
+  UNKNOWN
+}
+
+/// 02-MVP-TECHNICAL-SPECIFICATION.md §11, plus MANUAL_ENTRY for the
+/// admin-entry endpoint (docs/decisions/0003-opportunity-priority-order.md).
+enum SourceType {
+  WEBSITE
+  TWITTER
+  DISCORD
+  TELEGRAM
+  DOCUMENTATION
+  BLOCKCHAIN_EXPLORER
+  ON_CHAIN
+  MANUAL_ENTRY
+  OTHER
+}
+
+/// docs/decisions/0005-wallet-reputation-deferred.md — the only MVP signal
+/// is a factual "this tracked wallet interacted with this contract"
+/// observation. No wallet is ever labelled "smart". Extend only when a new
+/// reputation signal is deliberately built.
+enum WalletSignalType {
+  EARLY_INTERACTION
+}
+
+/// MVP set for Project.projectType; not prescribed verbatim by the spec.
+enum ProjectType {
+  NFT_COLLECTION
+  TOKEN
+  DEFI_PROTOCOL
+  OTHER
+}
+
+/// MVP set for Project.status; not prescribed verbatim by the spec.
+enum ProjectStatus {
+  ACTIVE
+  INACTIVE
+}
+
+/// MVP set for Contract.contractType; not prescribed verbatim by the spec.
+/// Feeds contractRisk (proxy/upgradeable detection) per 08 §4.1.
+enum ContractType {
+  ERC20
+  ERC721
+  ERC1155
+  OTHER
+  UNKNOWN
+}
+
+/// MVP set for WalletActivity.activityType; not prescribed verbatim by the spec.
+enum ActivityType {
+  MINT
+  TRANSFER
+  SWAP
+  CONTRACT_DEPLOYMENT
+  OTHER
+}
+
+/// MVP set for OpportunityRequirement.requirementType; not prescribed
+/// verbatim by the spec.
+enum RequirementType {
+  SOCIAL_FOLLOW
+  DISCORD_JOIN
+  WALLET_CONNECT
+  MIN_BALANCE
+  WHITELIST_PROOF
+  EMAIL_SIGNUP
+  OTHER
+}
+
+/// MVP set for OpportunityEvent.eventType; not prescribed verbatim by the spec.
+enum OpportunityEventType {
+  DETECTED
+  VERIFIED
+  SCORED
+  AI_ANALYZED
+  ALERT_SENT
+  STATUS_CHANGED
+  MANUAL_UPDATE
+  OTHER
+}
+
+/// MVP set for Participation.status; not prescribed verbatim by the spec.
+enum ParticipationStatus {
+  INTERESTED
+  PARTICIPATING
+  COMPLETED
+  DISMISSED
+}
+
+/// 01-PROJECT-CONSTITUTION.md §15 — Telegram is the only alert channel in
+/// the MVP.
+enum AlertChannel {
+  TELEGRAM
+}
+
+/// docs/spec/03-CLAUDE-BUILD-PROMPT.md — the two MVP Telegram templates.
+enum AlertType {
+  NFT_MINT_ALERT
+  TOKEN_ALERT
+}
+
+/// SUPPRESSED pairs with Alert.suppressedReason (09 §7 / 08 §4.4).
+enum DeliveryStatus {
+  PENDING
+  SENT
+  FAILED
+  SUPPRESSED
+}
+
+/// 09-INFRASTRUCTURE-DECISION.md §7 — status of one poller invocation.
+enum IngestionRunStatus {
+  SUCCESS
+  FAILED
+  PARTIAL
+}
+
+// ---------------------------------------------------------------------------
+// Models — 02-MVP-TECHNICAL-SPECIFICATION.md §7
+// ---------------------------------------------------------------------------
+
+/// Nullable email/passwordHash per docs/decisions/0004-telegram-first-identity.md:
+/// /start creates this row with telegramUserId (via TelegramAccount) as the
+/// primary identity. Web login is an optional later upgrade.
+model User {
+  id           String   @id @default(cuid())
+  email        String?  @unique
+  passwordHash String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  settings        UserSettings?
+  telegramAccount TelegramAccount?
+  wallets         Wallet[]
+  alerts          Alert[]
+  participations  Participation[]
+}
+
+model UserSettings {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  telegramEnabled         Boolean           @default(true)
+  /// Default mirrors ALERT_MIN_SCORE in docs/spec/09-INFRASTRUCTURE-DECISION.md §9.
+  minimumScore            Int               @default(60)
+  enabledOpportunityTypes OpportunityType[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model TelegramAccount {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  telegramUserId String  @unique
+  chatId         String  @unique
+  username       String?
+  isActive       Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Wallet {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  address   String
+  /// Chain identifier as a plain string, not an enum — 01 §17 requires the
+  /// core architecture to allow future chain adapters without an MVP schema
+  /// migration for each one.
+  chain     String
+  label     String?
+  isPrimary Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  activities WalletActivity[]
+  signals    WalletSignal[]
+
+  @@index([chain, address])
+  @@index([userId])
+}
+
+model Project {
+  id          String        @id @default(cuid())
+  name        String
+  slug        String        @unique
+  description String?
+  chain       String
+  projectType ProjectType
+  status      ProjectStatus @default(ACTIVE)
+  websiteUrl  String?
+  logoUrl     String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  socials       ProjectSocial[]
+  contracts     Contract[]
+  opportunities Opportunity[]
+
+  @@index([chain])
+}
+
+model ProjectSocial {
+  id        String  @id @default(cuid())
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  /// Kept as a plain string (twitter/discord/telegram/website/...) rather
+  /// than an enum — not named as a shared type in the spec's packages/types
+  /// list; promote to an enum later if it needs cross-app validation.
+  platform               String
+  url                    String
+  verificationStatus     VerificationStatus @default(UNVERIFIED)
+  verificationConfidence Float?
+
+  @@index([projectId])
+}
+
+model Contract {
+  id        String  @id @default(cuid())
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  address         String
+  chain           String
+  contractType    ContractType @default(UNKNOWN)
+  verified        Boolean      @default(false)
+  deployerAddress String?
+  deployedAt      DateTime?
+  metadata        Json?
+  createdAt       DateTime     @default(now())
+
+  /// 02 §7 — "prevent duplicate chain+contract combinations where
+  /// appropriate." Applied at the Contract level: the same on-chain
+  /// contract cannot be recorded twice. This does not by itself prevent two
+  /// open Opportunity rows against the same contract — 08 §4.5's proposed
+  /// (chain, contractAddress, type, actionProfile) partial-unique
+  /// constraint on Opportunity was evaluated but not implemented here, since
+  /// Opportunity has no direct contract reference in the 02 §7 field list.
+  /// See the completion report for this open item.
+  @@unique([chain, address])
+  @@index([projectId])
+  @@index([deployerAddress])
+}
+
+model Opportunity {
+  id        String  @id @default(cuid())
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  type              OpportunityType
+  actionProfile     ActionProfile
+  title             String
+  description       String?
+  status            OpportunityStatus @default(DETECTED)
+  /// Null until the scoring stage runs (08 §4.2).
+  score             Int?
+  riskScore         Int?
+  urgency           Urgency?
+  detectedAt        DateTime          @default(now())
+  startsAt          DateTime?
+  endsAt            DateTime?
+  entryCost         Decimal?          @db.Decimal(38, 18)
+  currency          String?
+  officialActionUrl String?
+
+  /// Additive per 09 §7 / 08 §4.2 — reproducibility and re-scoring.
+  scoreInputs    Json?
+  scoringVersion String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  requirements    OpportunityRequirement[]
+  events          OpportunityEvent[]
+  evidence        Evidence[]
+  riskAssessments RiskAssessment[]
+  aiAnalyses      AIAnalysis[]
+  walletSignals   WalletSignal[]
+  alerts          Alert[]
+  participations  Participation[]
+
+  @@index([status, type, detectedAt])
+  @@index([projectId])
+}
+
+model OpportunityRequirement {
+  id            String      @id @default(cuid())
+  opportunityId String
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  description     String
+  requirementType RequirementType
+  required        Boolean         @default(true)
+  sourceUrl       String?
+
+  @@index([opportunityId])
+}
+
+model OpportunityEvent {
+  id            String      @id @default(cuid())
+  opportunityId String
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  eventType  OpportunityEventType
+  payload    Json?
+  detectedAt DateTime             @default(now())
+
+  @@index([opportunityId])
+  @@index([detectedAt])
+}
+
+model Source {
+  id               String     @id @default(cuid())
+  type             SourceType
+  url              String
+  title            String?
+  publisher        String?
+  retrievedAt      DateTime   @default(now())
+  reliabilityScore Float?
+
+  evidence Evidence[]
+
+  @@index([url])
+}
+
+model Evidence {
+  id            String      @id @default(cuid())
+  opportunityId String
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  sourceId      String
+  source        Source      @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+
+  claim        String
+  evidenceType EvidenceType
+  confidence   Float?
+  createdAt    DateTime     @default(now())
+
+  @@index([opportunityId])
+  @@index([sourceId])
+}
+
+model RiskAssessment {
+  id            String      @id @default(cuid())
+  opportunityId String
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  /// Per docs/decisions/0006-risk-and-token-page-unknowns.md: contractRisk,
+  /// concentrationRisk and deployerRisk are built in the MVP; liquidityRisk
+  /// and socialRisk stay UNKNOWN permanently; linkRisk is partial. All
+  /// default to UNKNOWN so an assessment row is honest by default.
+  overallRisk       RiskLevel @default(UNKNOWN)
+  contractRisk      RiskLevel @default(UNKNOWN)
+  liquidityRisk     RiskLevel @default(UNKNOWN)
+  socialRisk        RiskLevel @default(UNKNOWN)
+  linkRisk          RiskLevel @default(UNKNOWN)
+  deployerRisk      RiskLevel @default(UNKNOWN)
+  concentrationRisk RiskLevel @default(UNKNOWN)
+  reasons           String[]
+  createdAt         DateTime  @default(now())
+
+  @@index([opportunityId])
+}
+
+model AIAnalysis {
+  id            String      @id @default(cuid())
+  opportunityId String
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  model          String
+  summary        String
+  classification String
+  reasoning      String?
+  risks          String[]
+  confidence     Float?
+  generatedAt    DateTime @default(now())
+
+  @@index([opportunityId])
+}
+
+model WalletActivity {
+  id       String @id @default(cuid())
+  walletId String
+  wallet   Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  chain           String
+  transactionHash String
+  timestamp       DateTime
+  activityType    ActivityType
+  contractAddress String?
+  tokenAddress    String?
+  value           Decimal?     @db.Decimal(38, 18)
+  metadata        Json?
+
+  @@index([walletId, timestamp])
+  @@index([transactionHash])
+}
+
+model WalletSignal {
+  id            String      @id @default(cuid())
+  walletId      String
+  wallet        Wallet      @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  opportunityId String
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  /// docs/decisions/0005 — MVP only ever writes EARLY_INTERACTION; strength
+  /// stays null (no reputation scoring in the MVP).
+  signalType WalletSignalType
+  strength   Float?
+  evidence   String?
+  detectedAt DateTime         @default(now())
+
+  @@index([walletId])
+  @@index([opportunityId])
+}
+
+model Alert {
+  id            String      @id @default(cuid())
+  opportunityId String
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  /// Nullable per 09 §7 / 08 §4.6 — a broadcast-channel alert has no
+  /// per-user recipient.
+  userId       String?
+  user         User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Additive per 09 §7 / 08 §4.6 — Telegram chat/channel id for a
+  /// broadcast alert. One nullable column, no billing, no new feature: it
+  /// only keeps a future public-channel distribution path open.
+  targetChatId String?
+
+  channel          AlertChannel
+  alertType        AlertType
+  sentAt           DateTime?
+  deliveryStatus   DeliveryStatus @default(PENDING)
+  /// Additive per 09 §7 / 08 §4.4 — why an alert was not sent, so
+  /// thresholds can be tuned later.
+  suppressedReason String?
+
+  @@index([userId, sentAt])
+  @@index([opportunityId])
+}
+
+model Participation {
+  id            String      @id @default(cuid())
+  userId        String
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  opportunityId String
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  status    ParticipationStatus @default(INTERESTED)
+  notes     String?
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+
+  @@index([userId])
+  @@index([opportunityId])
+}
+
+/// 09-INFRASTRUCTURE-DECISION.md §7 — how the scheduled poller knows where
+/// it stopped. Unique on chain. The pipeline must advance lastBlockNumber
+/// only after a run's writes commit, or a mid-run crash silently skips a
+/// block range forever.
+model IngestionCheckpoint {
+  id              String              @id @default(cuid())
+  chain           String              @unique
+  lastBlockNumber BigInt
+  lastRunAt       DateTime?
+  lastRunStatus   IngestionRunStatus?
+  lastRunError    String?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+}

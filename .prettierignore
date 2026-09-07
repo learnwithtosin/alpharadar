@@ -1,0 +1,11 @@
+node_modules
+.next
+dist
+build
+coverage
+pnpm-lock.yaml
+packages/database/prisma/migrations
+
+# Hand-authored specification and decision documents — not auto-formatted,
+# to avoid incidental diffs to carefully worded text.
+docs/

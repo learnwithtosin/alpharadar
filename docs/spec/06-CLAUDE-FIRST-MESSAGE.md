@@ -1,5 +1,9 @@
 # Message to send Claude first
 
+> SUPERSEDED — dead file. This was a one-time briefing script for the initial
+> upload of the spec pack (files 01–05 only, predating 08 and 09) and is not
+> used going forward. Kept for history only.
+
 Upload the AlphaRadar specification pack first.
 
 Then send this message:

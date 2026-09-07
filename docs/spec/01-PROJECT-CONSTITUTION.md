@@ -274,6 +274,14 @@ Never weaken the security model for a shortcut.
 
 ## 23. Build order
 
+Amended 2026-09-07 (see docs/decisions/0007-vertical-slice-build-order.md):
+§23 lists the components of the system and their dependency order. It is not
+a strict phase gate. Where a vertical slice ships a later-numbered component
+before an earlier one, the ordering constraint that survives is dependency,
+not numbering — nothing may be built on top of something that does not exist
+yet. The AI analysis component may be built with its live invocation
+deferred, as recorded in 09 §4.
+
 1. Repository foundation
 2. Database
 3. Robinhood adapter

@@ -1,5 +1,9 @@
 # AlphaRadar — Environment Contract
 
+> SUPERSEDED BY 09-INFRASTRUCTURE-DECISION.md §9. Kept for history only — do
+> not use this file's variable list. See 09 for the authoritative env
+> contract.
+
 Copy this file to `.env.example`.
 
 Never commit a real `.env`.

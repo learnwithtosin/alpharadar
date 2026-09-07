@@ -1,0 +1,36 @@
+{
+  "name": "alpharadar",
+  "private": true,
+  "version": "0.1.0",
+  "description": "AlphaRadar — Web3 opportunity-intelligence platform (monorepo root)",
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "pnpm -r --filter=!alpharadar build",
+    "dev": "pnpm -r --parallel --filter=!alpharadar dev",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "pnpm -r --filter=!alpharadar typecheck",
+    "test": "pnpm -r --filter=!alpharadar test",
+    "db:generate": "pnpm --filter @alpharadar/database db:generate",
+    "db:migrate": "pnpm --filter @alpharadar/database db:migrate",
+    "db:migrate:deploy": "pnpm --filter @alpharadar/database db:migrate:deploy",
+    "db:studio": "pnpm --filter @alpharadar/database db:studio"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.18.0",
+    "@typescript-eslint/eslint-plugin": "^8.20.0",
+    "@typescript-eslint/parser": "^8.20.0",
+    "eslint": "^9.18.0",
+    "eslint-config-prettier": "^9.1.0",
+    "globals": "^15.14.0",
+    "prettier": "^3.4.2",
+    "prettier-plugin-tailwindcss": "^0.6.9",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.20.0"
+  }
+}

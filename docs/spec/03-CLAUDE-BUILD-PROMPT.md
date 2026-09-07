@@ -48,7 +48,7 @@ AlphaRadar never stores private keys and never autonomously spends user funds.
 3. Keep blockchain access behind an adapter.
 4. Keep AI behind a provider interface.
 5. Keep scoring deterministic.
-6. Keep background processing in workers/queues.
+6. SUPERSEDED by 09-INFRASTRUCTURE-DECISION.md — see docs/decisions/0002-scheduled-polling.md. Keep background processing as a single scheduled-pipeline process (`apps/pipeline`); the named queues survive as function boundaries inside it, not as separate workers/queue infrastructure.
 7. Validate external inputs.
 8. Validate AI outputs with schemas.
 9. Store evidence for important claims.
@@ -74,6 +74,12 @@ First report:
 Then implement Phase 1 only.
 
 ## Phase 1 implementation order
+
+> SUPERSEDED — this Step 1–12 horizontal ordering is replaced by the
+> vertical-slice build order. See docs/decisions/0007-vertical-slice-build-order.md
+> for the operative sequencing. The individual step content below (what each
+> step must do) still stands; only the strict "finish step N before starting
+> step N+1" sequencing is superseded.
 
 ### Step 1 — Monorepo foundation
 
