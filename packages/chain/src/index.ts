@@ -1,8 +1,25 @@
-// Placeholder — not implemented yet.
-//
-// This package will hold the ChainAdapter interface and the
-// RobinhoodAdapter implementation (02-MVP-TECHNICAL-SPECIFICATION.md §8,
-// 09-INFRASTRUCTURE-DECISION.md §11). Deliberately empty for this phase:
-// "Implement the monorepo foundation and the complete database schema...
-// Do not implement any pipeline logic yet."
-export {};
+export type { ChainAdapter } from "./chain-adapter.js";
+export type {
+  AddressTransaction,
+  ChainBlock,
+  ChainLog,
+  ChainMetadata,
+  ChainTransaction,
+  ChainTransactionReceipt,
+  ContractVerification,
+  GetLogsParams,
+  PageCursor,
+  PageParams,
+  PagedResult,
+  TokenHolder,
+  TokenMetadata,
+} from "./types.js";
+
+export { RobinhoodAdapter, type RobinhoodAdapterOptions } from "./robinhood-adapter.js";
+export { ROBINHOOD_CHAIN_ID, robinhoodChain } from "./robinhood-chain-definition.js";
+
+export { BlockscoutClient, DEFAULT_USER_AGENT } from "./blockscout-client.js";
+export type { BlockscoutClientOptions, BlockscoutGetOptions } from "./blockscout-client.js";
+
+export { chunkBlockRange, type BlockRange } from "./chunk-block-range.js";
+export { NotImplementedError, BlockscoutHttpError } from "./errors.js";
