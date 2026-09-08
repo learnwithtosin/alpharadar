@@ -6,6 +6,7 @@ export type {
   ChainMetadata,
   ChainTransaction,
   ChainTransactionReceipt,
+  ContractCreation,
   ContractVerification,
   GetLogsParams,
   PageCursor,
@@ -13,10 +14,15 @@ export type {
   PagedResult,
   TokenHolder,
   TokenMetadata,
+  VerifiedContractSummary,
 } from "./types.js";
 
 export { RobinhoodAdapter, type RobinhoodAdapterOptions } from "./robinhood-adapter.js";
-export { ROBINHOOD_CHAIN_ID, robinhoodChain } from "./robinhood-chain-definition.js";
+export {
+  ROBINHOOD_CHAIN_ID,
+  ROBINHOOD_CHAIN_SLUG,
+  robinhoodChain,
+} from "./robinhood-chain-definition.js";
 
 export { BlockscoutClient, DEFAULT_USER_AGENT } from "./blockscout-client.js";
 export type { BlockscoutClientOptions, BlockscoutGetOptions } from "./blockscout-client.js";

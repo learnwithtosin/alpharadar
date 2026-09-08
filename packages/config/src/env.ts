@@ -1,6 +1,19 @@
 import { z } from "zod";
 
 /**
+ * The root .env.example ships every key present but blank (e.g.
+ * `AUTH_SECRET=`), and dotenv loads that as an empty string, not as an
+ * absent key. An unset-but-present env var must still count as "not
+ * configured" for an optional field — otherwise filling in .env.example's
+ * scaffolding without a real value turns every optional secret into a
+ * hard validation failure. Wrap optional string fields in this so an
+ * empty string is treated the same as the key being absent entirely.
+ */
+function optional(schema: z.ZodString) {
+  return z.preprocess((value) => (value === "" ? undefined : value), schema.optional());
+}
+
+/**
  * Authoritative source: docs/spec/09-INFRASTRUCTURE-DECISION.md §9.
  * This supersedes docs/spec/05-ENVIRONMENT-CONTRACT.md — REDIS_URL and
  * API_URL are deliberately absent; there is no Redis and no separate API
@@ -15,28 +28,37 @@ import { z } from "zod";
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   WEB_URL: z.string().url().default("http://localhost:3000"),
-  AUTH_SECRET: z.string().min(1).optional(),
+  AUTH_SECRET: optional(z.string().min(1)),
 
   // Supabase Postgres — pooled connection for the app, direct connection
   // for migrations. See packages/database/prisma/schema.prisma.
-  DATABASE_URL: z.string().min(1).optional(),
-  DIRECT_URL: z.string().min(1).optional(),
+  DATABASE_URL: optional(z.string().min(1)),
+  DIRECT_URL: optional(z.string().min(1)),
 
   // Pipeline driver — see docs/spec/09-INFRASTRUCTURE-DECISION.md §11.
   RUN_MODE: z.enum(["poll", "stream"]).default("poll"),
 
   // Robinhood Chain
   ROBINHOOD_RPC_URL: z.string().url().default("https://rpc.mainnet.chain.robinhood.com"),
-  ROBINHOOD_WS_URL: z.union([z.string().url(), z.literal("")]).optional(),
+  ROBINHOOD_WS_URL: optional(z.string().url()),
   ROBINHOOD_CHAIN_ID: z.coerce.number().int().positive().default(4663),
   ROBINHOOD_EXPLORER_API_URL: z.string().url().default("https://robinhoodchain.blockscout.com/api"),
   ROBINHOOD_EXPLORER_URL: z.string().url().default("https://robinhoodchain.blockscout.com"),
 
   // Telegram
-  TELEGRAM_BOT_TOKEN: z.string().min(1).optional(),
+  TELEGRAM_BOT_TOKEN: optional(z.string().min(1)),
 
   // Pipeline controls
   POLL_BLOCK_CHUNK_SIZE: z.coerce.number().int().positive().default(1000),
+  // Discovery scans one block per unbatched eth_getBlockReceipts RPC call —
+  // batching this call was proven live not to hold up under sustained load
+  // (see ChainAdapter.getRecentContractCreations). At the measured safe
+  // rate (~3.1-3.2 blocks/sec, unbatched sequential), 150 blocks costs
+  // ~47s, leaving headroom in a run for enrichment reads and retries
+  // within a ~60s budget. A run scans only the most recent
+  // MAX_BLOCKS_PER_RUN blocks and does not backfill beyond that — see
+  // checkpoint.ts's getNextRange.
+  MAX_BLOCKS_PER_RUN: z.coerce.number().int().positive().default(150),
   ALERT_MIN_SCORE: z.coerce.number().int().min(0).max(100).default(60),
   ALERT_MAX_PER_USER_PER_HOUR: z.coerce.number().int().positive().default(6),
 
@@ -46,7 +68,7 @@ const envSchema = z.object({
     .default("false")
     .transform((value) => value === "true"),
   AI_PROVIDER: z.enum(["claude", "openai"]).default("claude"),
-  AI_API_KEY: z.string().min(1).optional(),
+  AI_API_KEY: optional(z.string().min(1)),
   AI_MIN_SCORE_TO_ANALYZE: z.coerce.number().int().min(0).max(100).default(70),
 
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),

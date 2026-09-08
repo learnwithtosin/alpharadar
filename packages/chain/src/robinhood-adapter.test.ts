@@ -42,6 +42,13 @@ function makeAdapter(overrides: {
 }
 
 describe("RobinhoodAdapter — RPC-backed methods", () => {
+  it("getLatestBlockNumber returns the head block number", async () => {
+    const getBlockNumber = vi.fn().mockResolvedValue(56951115n);
+    const adapter = makeAdapter({ publicClient: { getBlockNumber } });
+
+    await expect(adapter.getLatestBlockNumber()).resolves.toBe(56951115n);
+  });
+
   it("getChainMetadata reports chain id 4663", async () => {
     const adapter = makeAdapter({});
     await expect(adapter.getChainMetadata()).resolves.toEqual({
@@ -226,9 +233,105 @@ describe("RobinhoodAdapter — RPC-backed methods", () => {
     const adapter = makeAdapter({});
     await expect(adapter.subscribeToBlocks(() => {})).rejects.toThrow(NotImplementedError);
   });
+
+  it("getRecentContractCreations calls eth_getBlockReceipts once per block, sequentially, never batched", async () => {
+    const calls: string[] = [];
+    const request = vi.fn().mockImplementation(async (args: { params: [string] }) => {
+      calls.push(args.params[0]);
+      return [];
+    });
+    const adapter = makeAdapter({ publicClient: { request } });
+
+    await adapter.getRecentContractCreations(100n, 103n);
+
+    expect(request.mock.calls.every(([args]) => args.method === "eth_getBlockReceipts")).toBe(true);
+    expect(calls).toEqual(["0x64", "0x65", "0x66", "0x67"]);
+  });
+
+  it("getRecentContractCreations finds a creation via a non-null contractAddress and status success, checksums addresses", async () => {
+    const request = vi.fn().mockResolvedValue([
+      {
+        contractAddress: "0xbc12319ac2b452c8f23fd9d009214b2f46fb9263",
+        status: "0x1",
+        transactionHash: "0x279ea8bc44cd0ee8fc46192de0ae202c81f76c3982197add315d8690acda239d",
+        blockNumber: "0x36fc2de",
+        from: "0x02b41dcf9ed57cdfdfbd61b8836d419ea3d6e266",
+      },
+    ]);
+    const adapter = makeAdapter({ publicClient: { request } });
+
+    const creations = await adapter.getRecentContractCreations(57656030n, 57656030n);
+
+    expect(creations).toEqual([
+      {
+        address: "0xBC12319AC2b452c8f23Fd9D009214B2F46fb9263",
+        creatorAddress: "0x02B41dcf9ed57CdFDFbd61b8836D419ea3D6E266",
+        transactionHash: "0x279ea8bc44cd0ee8fc46192de0ae202c81f76c3982197add315d8690acda239d",
+        blockNumber: 57656030n,
+      },
+    ]);
+  });
+
+  it("getRecentContractCreations excludes a failed creation attempt (status != 0x1)", async () => {
+    const request = vi.fn().mockResolvedValue([
+      {
+        contractAddress: "0xbc12319ac2b452c8f23fd9d009214b2f46fb9263",
+        status: "0x0",
+        transactionHash: "0xtx",
+        blockNumber: "0x1",
+        from: "0x02b41dcf9ed57cdfdfbd61b8836d419ea3d6e266",
+      },
+    ]);
+    const adapter = makeAdapter({ publicClient: { request } });
+
+    const creations = await adapter.getRecentContractCreations(1n, 1n);
+
+    expect(creations).toEqual([]);
+  });
+
+  it("getRecentContractCreations excludes ordinary (non-creation) receipts", async () => {
+    const request = vi.fn().mockResolvedValue([
+      {
+        contractAddress: null,
+        status: "0x1",
+        transactionHash: "0xtx",
+        blockNumber: "0x1",
+        from: "0x02b41dcf9ed57cdfdfbd61b8836d419ea3d6e266",
+      },
+    ]);
+    const adapter = makeAdapter({ publicClient: { request } });
+
+    const creations = await adapter.getRecentContractCreations(1n, 1n);
+
+    expect(creations).toEqual([]);
+  });
 });
 
 describe("RobinhoodAdapter — Blockscout-backed methods", () => {
+  it("getRecentlyVerifiedContracts maps the newest-first list and passes the cursor through", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonResponse(200, {
+        items: [
+          {
+            address: { hash: "0xabc", name: "CookLauncherToken" },
+            verified_at: "2026-09-07T16:22:55Z",
+          },
+          { address: { hash: "0xdef", name: null }, verified_at: "2026-09-07T16:22:53Z" },
+        ],
+        next_page_params: { items_count: 50, smart_contract_id: 1020486 },
+      }),
+    );
+    const adapter = makeAdapter({ fetchImpl });
+
+    await expect(adapter.getRecentlyVerifiedContracts()).resolves.toEqual({
+      items: [
+        { address: "0xabc", name: "CookLauncherToken", verifiedAt: "2026-09-07T16:22:55Z" },
+        { address: "0xdef", name: null, verifiedAt: "2026-09-07T16:22:53Z" },
+      ],
+      nextCursor: { items_count: 50, smart_contract_id: 1020486 },
+    });
+  });
+
   it("getTokenMetadata converts string decimals/supply/holders to numeric types", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       jsonResponse(200, {

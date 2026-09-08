@@ -6,12 +6,14 @@ import type {
   ChainMetadata,
   ChainTransaction,
   ChainTransactionReceipt,
+  ContractCreation,
   ContractVerification,
   GetLogsParams,
   PagedResult,
   PageParams,
   TokenHolder,
   TokenMetadata,
+  VerifiedContractSummary,
 } from "./types.js";
 
 /**
@@ -23,6 +25,9 @@ import type {
  */
 export interface ChainAdapter {
   getChainMetadata(): Promise<ChainMetadata>;
+
+  /** Current chain head. Needed by PollingDriver to compute a run's block range. */
+  getLatestBlockNumber(): Promise<bigint>;
 
   getBlock(blockNumber: bigint): Promise<ChainBlock>;
   getTransaction(hash: Hex): Promise<ChainTransaction | null>;
@@ -50,4 +55,41 @@ export interface ChainAdapter {
     params?: PageParams,
   ): Promise<PagedResult<AddressTransaction>>;
   getContractVerification(address: Address): Promise<ContractVerification>;
+
+  /**
+   * Verified-contracts feed (Blockscout /v2/smart-contracts, newest-verified
+   * first). No longer used for discovery — see getRecentContractCreations.
+   * Verification is optional, usually delayed by days, and something scam
+   * deployers essentially never do, so this feed structurally misses
+   * exactly the contracts an early-detection product needs to see first.
+   * Confirmed live and kept for whatever still legitimately needs a
+   * verified-contract listing (it is not dead — just not the discovery
+   * source).
+   */
+  getRecentlyVerifiedContracts(params?: PageParams): Promise<PagedResult<VerifiedContractSummary>>;
+
+  /**
+   * New-contract discovery, in chain order, including unverified
+   * deployments — replaces getRecentlyVerifiedContracts as the discovery
+   * source. Scans every block in [fromBlock, toBlock] via one
+   * eth_getBlockReceipts call per block and returns every successful
+   * contract creation found (receipt.contractAddress !== null, status
+   * success).
+   *
+   * Deliberately one block per RPC call, not batched. Confirmed live
+   * against this chain's public RPC: a single isolated JSON-RPC batch of
+   * up to 29 eth_getBlockReceipts requests in one HTTP call succeeds
+   * (30 fails immediately, consistently — a hard batch-size or
+   * burst-budget ceiling). But *sustained* batching does not hold up: two
+   * batches of 29 fired back-to-back, and repeated batches of only 5,
+   * both exhausted the underlying rate budget within one or two calls and
+   * triggered a lockout that did not clear within 60s of continued
+   * (paced) retries. The only approach proven safe under sustained load is
+   * plain sequential, unbatched calls at natural network pace — measured
+   * twice, cleanly, zero errors: 300 calls/105s and 191 calls/60s
+   * (~3.1-3.2 blocks/sec). Callers must size fromBlock/toBlock accordingly
+   * (see checkpoint.ts's getNextRange for the accepted per-run block
+   * window) rather than assume this can be sped up with batching.
+   */
+  getRecentContractCreations(fromBlock: bigint, toBlock: bigint): Promise<ContractCreation[]>;
 }

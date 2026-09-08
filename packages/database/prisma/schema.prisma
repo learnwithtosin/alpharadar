@@ -376,6 +376,22 @@ model Opportunity {
   scoreInputs    Json?
   scoringVersion String?
 
+  /// Additive for apps/pipeline's resolve stage — 08 §4.5's dedup key.
+  /// Denormalized (not a Contract FK) because the key is expressed
+  /// directly in terms of (chain, contractAddress) values, and not every
+  /// opportunity type is contract-anchored (a manually-entered whitelist
+  /// or airdrop, per docs/decisions/0003, may have neither). Nullable for
+  /// exactly that reason.
+  ///
+  /// True uniqueness — "for open opportunities": a COMPLETED or EXPIRED
+  /// opportunity does not block a new one on the same contract — is
+  /// enforced by a hand-written partial unique index in this schema
+  /// change's migration.sql, not here: Prisma's schema DSL has no WHERE
+  /// clause for @@unique. The @@index below is a plain (non-unique) index
+  /// for the same columns, for query performance only.
+  chain           String?
+  contractAddress String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -390,6 +406,7 @@ model Opportunity {
 
   @@index([status, type, detectedAt])
   @@index([projectId])
+  @@index([chain, contractAddress])
 }
 
 model OpportunityRequirement {

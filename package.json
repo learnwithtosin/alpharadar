@@ -16,6 +16,7 @@
     "format:check": "prettier --check .",
     "typecheck": "pnpm -r --filter=!alpharadar typecheck",
     "test": "pnpm -r --filter=!alpharadar test",
+    "pipeline": "pnpm --filter @alpharadar/pipeline start",
     "db:generate": "pnpm --filter @alpharadar/database db:generate",
     "db:migrate": "pnpm --filter @alpharadar/database db:migrate",
     "db:migrate:deploy": "pnpm --filter @alpharadar/database db:migrate:deploy",

@@ -1,5 +1,10 @@
 import { Prisma } from "@prisma/client";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /**
  * Structural smoke tests against the generated Prisma DMMF. These run
@@ -113,6 +118,14 @@ describe("schema — 09 §7 additive columns", () => {
     );
   });
 
+  it("Opportunity has nullable chain and contractAddress (apps/pipeline dedup key, 08 §4.5)", () => {
+    const fields = model("Opportunity").fields;
+    const chain = fields.find((f) => f.name === "chain");
+    const contractAddress = fields.find((f) => f.name === "contractAddress");
+    expect(chain?.isRequired).toBe(false);
+    expect(contractAddress?.isRequired).toBe(false);
+  });
+
   it("Alert has suppressedReason, targetChatId, and nullable userId", () => {
     const fields = model("Alert").fields;
     expect(fields.map((f) => f.name)).toEqual(
@@ -154,5 +167,22 @@ describe("schema — duplicate prevention (02 §7)", () => {
       (idx) => [...idx.fields].sort().join(",") === ["chain", "address"].sort().join(","),
     );
     expect(hasChainAddressUnique).toBe(true);
+  });
+
+  it("the Opportunity open-status dedup key (08 §4.5) is a real partial unique index in the migration", () => {
+    // Prisma's DMMF has no concept of this constraint — it's a hand-written
+    // WHERE-clause index Prisma's schema DSL can't express (see the field
+    // comment in schema.prisma). This guards against someone regenerating
+    // migrations and silently losing it.
+    const migrationPath = join(
+      __dirname,
+      "../prisma/migrations/20260907162851_opportunity_contract_dedup/migration.sql",
+    );
+    const sql = readFileSync(migrationPath, "utf-8");
+
+    expect(sql).toMatch(
+      /CREATE UNIQUE INDEX "Opportunity_open_dedup_key" ON "Opportunity"\("chain", "contractAddress", "type", "actionProfile"\)/,
+    );
+    expect(sql).toMatch(/WHERE[\s\S]*"status" NOT IN \('COMPLETED', 'EXPIRED'\)/);
   });
 });

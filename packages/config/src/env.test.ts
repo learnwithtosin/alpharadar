@@ -41,4 +41,38 @@ describe("getEnv", () => {
 
     expect(env.NODE_ENV).toBe("production");
   });
+
+  it("treats an env var present as an empty string the same as unset, for optional fields", () => {
+    // .env.example ships every key blank (e.g. `AUTH_SECRET=`), which
+    // dotenv loads as "", not as an absent key. That must not fail
+    // validation for an optional field in development.
+    const env = getEnv({
+      NODE_ENV: "development",
+      AUTH_SECRET: "",
+      DATABASE_URL: "",
+      DIRECT_URL: "",
+      TELEGRAM_BOT_TOKEN: "",
+      AI_API_KEY: "",
+      ROBINHOOD_WS_URL: "",
+    } as NodeJS.ProcessEnv);
+
+    expect(env.AUTH_SECRET).toBeUndefined();
+    expect(env.DATABASE_URL).toBeUndefined();
+    expect(env.DIRECT_URL).toBeUndefined();
+    expect(env.TELEGRAM_BOT_TOKEN).toBeUndefined();
+    expect(env.AI_API_KEY).toBeUndefined();
+    expect(env.ROBINHOOD_WS_URL).toBeUndefined();
+  });
+
+  it("still requires the production variables when they're present but empty", () => {
+    expect(() =>
+      getEnv({
+        NODE_ENV: "production",
+        AUTH_SECRET: "",
+        DATABASE_URL: "",
+        DIRECT_URL: "",
+        TELEGRAM_BOT_TOKEN: "",
+      } as NodeJS.ProcessEnv),
+    ).toThrow(/Missing required production environment variables/);
+  });
 });

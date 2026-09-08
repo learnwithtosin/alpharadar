@@ -108,6 +108,31 @@ export interface AddressTransaction {
   methodName: string | null;
 }
 
+/**
+ * One item from the newest-verified-first feed backing
+ * getRecentlyVerifiedContracts. Deliberately thin — callers that need full
+ * verification detail (compiler, language, source) call
+ * getContractVerification for that specific address.
+ */
+export interface VerifiedContractSummary {
+  address: Address;
+  name: string | null;
+  /** ISO 8601. */
+  verifiedAt: string | null;
+}
+
+/**
+ * One contract-creation transaction found by scanning block receipts
+ * directly via RPC (`getRecentContractCreations`) — chain-order, includes
+ * unverified deployments, unlike `VerifiedContractSummary`.
+ */
+export interface ContractCreation {
+  address: Address;
+  creatorAddress: Address;
+  transactionHash: Hex;
+  blockNumber: bigint;
+}
+
 export interface ContractVerification {
   isVerified: boolean;
   name: string | null;

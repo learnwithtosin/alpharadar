@@ -59,6 +59,9 @@ importers:
       '@alpharadar/types':
         specifier: workspace:*
         version: link:../../packages/types
+      viem:
+        specifier: ^2.21.55
+        version: 2.56.3(typescript@5.9.3)(zod@3.25.76)
     devDependencies:
       '@types/node':
         specifier: ^22.10.5
@@ -149,6 +152,9 @@ importers:
 
   packages/config:
     dependencies:
+      dotenv:
+        specifier: ^16.4.7
+        version: 16.6.1
       zod:
         specifier: ^3.24.1
         version: 3.25.76
@@ -165,6 +171,9 @@ importers:
 
   packages/database:
     dependencies:
+      '@alpharadar/config':
+        specifier: workspace:*
+        version: link:../config
       '@prisma/client':
         specifier: ^6.2.1
         version: 6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)

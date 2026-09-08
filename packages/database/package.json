@@ -20,6 +20,7 @@
     "lint": "eslint ."
   },
   "dependencies": {
+    "@alpharadar/config": "workspace:*",
     "@prisma/client": "^6.2.1"
   },
   "devDependencies": {

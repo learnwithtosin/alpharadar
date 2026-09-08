@@ -1,4 +1,22 @@
+// Side effect: loads the repo-root .env into process.env before the
+// DATABASE_URL check below runs. Every consumer of this module gets this
+// for free — no per-app dotenv wiring required.
+import "@alpharadar/config";
 import { PrismaClient } from "@prisma/client";
+
+/**
+ * PrismaClient itself only reads DATABASE_URL lazily, at the first query —
+ * so without this check, a missing variable surfaces as a raw Prisma error
+ * deep inside whatever the app happened to be doing, not at startup. Fail
+ * loudly and immediately instead, naming the variable.
+ */
+if (!process.env.DATABASE_URL) {
+  throw new Error(
+    "Missing required environment variable: DATABASE_URL. Set it in the " +
+      "repo-root .env (copy .env.example if you haven't) before starting " +
+      "anything that touches the database.",
+  );
+}
 
 /**
  * Single shared Prisma client. apps/pipeline runs as a short-lived scheduled

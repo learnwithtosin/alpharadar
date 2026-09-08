@@ -24,12 +24,14 @@ import type {
   ChainMetadata,
   ChainTransaction,
   ChainTransactionReceipt,
+  ContractCreation,
   ContractVerification,
   GetLogsParams,
   PagedResult,
   PageParams,
   TokenHolder,
   TokenMetadata,
+  VerifiedContractSummary,
 } from "./types.js";
 
 export interface RobinhoodAdapterOptions {
@@ -100,6 +102,29 @@ interface RawSmartContractResponse {
   compiler_version: string | null;
   language: string | null;
   verified_at: string | null;
+}
+
+interface RawSmartContractListItem {
+  address: RawAddressRef & { name: string | null };
+  verified_at: string | null;
+}
+
+interface RawSmartContractListResponse {
+  items: RawSmartContractListItem[];
+  next_page_params: Record<string, string | number> | null;
+}
+
+/**
+ * The unformatted shape a raw `eth_getBlockReceipts` JSON-RPC response
+ * actually has — same hex-string-for-every-quantity convention as
+ * eth_getLogs (see RawEthGetLogsLog above). Confirmed live.
+ */
+interface RawBlockReceiptItem {
+  contractAddress: string | null;
+  status: Hex;
+  transactionHash: Hex;
+  blockNumber: Hex;
+  from: string;
 }
 
 /**
@@ -188,6 +213,10 @@ export class RobinhoodAdapter implements ChainAdapter {
       nativeCurrencySymbol: robinhoodChain.nativeCurrency.symbol,
       rpcUrl: this.rpcUrl,
     };
+  }
+
+  async getLatestBlockNumber(): Promise<bigint> {
+    return this.publicClient.getBlockNumber();
   }
 
   async getBlock(blockNumber: bigint): Promise<ChainBlock> {
@@ -402,5 +431,66 @@ export class RobinhoodAdapter implements ChainAdapter {
       language: result.language,
       verifiedAt: result.verified_at,
     };
+  }
+
+  /**
+   * Confirmed live: no sort param needed or accepted for this — the
+   * default order is already newest-verified-first. (Contrast
+   * getTokenMetadata's sibling /v2/tokens list, which defaults to
+   * holders_count/market-cap order and has no recency sort at all.)
+   */
+  async getRecentlyVerifiedContracts(
+    params?: PageParams,
+  ): Promise<PagedResult<VerifiedContractSummary>> {
+    const result = await this.blockscout.get<RawSmartContractListResponse>("/v2/smart-contracts", {
+      query: params?.cursor,
+    });
+    if (result === null) return { items: [], nextCursor: null };
+
+    return {
+      items: result.items.map((item) => ({
+        address: item.address.hash as Address,
+        name: item.address.name,
+        verifiedAt: item.verified_at,
+      })),
+      nextCursor: result.next_page_params,
+    };
+  }
+
+  /**
+   * One eth_getBlockReceipts call per block, sequential, never batched —
+   * see the doc comment on ChainAdapter.getRecentContractCreations for the
+   * live batching investigation this is based on. A creation is any
+   * receipt with a non-null contractAddress and status "0x1" (success); a
+   * failed creation attempt still consumes gas but produces no live
+   * contract and is excluded.
+   */
+  async getRecentContractCreations(
+    fromBlock: bigint,
+    toBlock: bigint,
+  ): Promise<ContractCreation[]> {
+    const creations: ContractCreation[] = [];
+
+    for (let blockNumber = fromBlock; blockNumber <= toBlock; blockNumber += 1n) {
+      const receipts = (await this.publicClient.request({
+        method: "eth_getBlockReceipts",
+        params: [numberToHex(blockNumber)],
+        // eth_getBlockReceipts isn't in viem's PublicRpcSchema — same
+        // unformatted-hex escape hatch as getLogs above.
+      } as unknown as Parameters<PublicClient["request"]>[0])) as unknown as
+        RawBlockReceiptItem[] | null;
+
+      for (const receipt of receipts ?? []) {
+        if (receipt.contractAddress === null || receipt.status !== "0x1") continue;
+        creations.push({
+          address: getAddress(receipt.contractAddress),
+          creatorAddress: getAddress(receipt.from),
+          transactionHash: receipt.transactionHash,
+          blockNumber: hexToBigInt(receipt.blockNumber),
+        });
+      }
+    }
+
+    return creations;
   }
 }
