@@ -25,9 +25,29 @@ export interface NftMintSignal {
   mintValue: bigint;
 }
 
+/**
+ * A newly-deployed ERC-20 with its first observed on-chain activity — a
+ * mint (Transfer from the zero address, typically the constructor minting
+ * initial supply) or an ordinary transfer, whichever comes first. See
+ * docs/decisions/0008-erc20-launch-detection.md: a live base-rate survey
+ * found ~166 contract creations/hour on this chain but 0 ERC-721/hour
+ * across a 3-hour sample, versus real (if rare) ERC-20 activity — Slice 1
+ * targets this instead of NFT mints for that reason.
+ */
+export interface Erc20LaunchSignal {
+  contractAddress: Address;
+  tokenName: string | null;
+  tokenSymbol: string | null;
+  activityTransactionHash: Hex;
+  activityBlockNumber: bigint;
+  /** wei sent with the first-activity transaction — usually 0n for a plain transfer. */
+  activityValue: bigint;
+}
+
 export interface IngestResult {
   nftMintSignals: NftMintSignal[];
-  /** Total candidate addresses pulled from discovery this run, before the known/type/mint filters. */
+  tokenLaunchSignals: Erc20LaunchSignal[];
+  /** Total candidate addresses pulled from discovery this run, before the known/type/activity filters. */
   candidatesScanned: number;
 }
 
@@ -50,15 +70,20 @@ function sortLogsByPosition<T extends { blockNumber: bigint; logIndex: number }>
 }
 
 /**
- * Slice 1's one detector: a new ERC-721 contract appearing on the chain,
- * plus its first mint activity. Discovery via
- * ChainAdapter.getRecentContractCreations — direct RPC block scanning, in
- * chain order, including unverified deployments. Replaces the earlier
- * Blockscout getRecentlyVerifiedContracts feed, which structurally missed
- * exactly the contracts an early-detection product needs to see first
- * (verification is optional, usually delayed by days, and something scam
- * deployers essentially never do). Mint detection via Transfer logs from
- * the zero address (09 §11 point 4 / project brief) is unchanged.
+ * Slice 1's detectors: primarily a new ERC-20 with its first activity
+ * (mint or transfer) — see Erc20LaunchSignal's doc comment for why this,
+ * not NFT mints, is the active target. The ERC-721-new-contract-plus-mint
+ * detector from the original Slice 1 is kept fully intact alongside it,
+ * unconditionally, so NFT activity is caught the moment it exists on this
+ * chain without any further code changes — it just hasn't fired in the
+ * base-rate survey's sample.
+ *
+ * Discovery via ChainAdapter.getRecentContractCreations — direct RPC block
+ * scanning, in chain order, including unverified deployments. Replaces the
+ * earlier Blockscout getRecentlyVerifiedContracts feed, which structurally
+ * missed exactly the contracts an early-detection product needs to see
+ * first (verification is optional, usually delayed by days, and something
+ * scam deployers essentially never do).
  *
  * Discovery is bounded to [params.fromBlock, params.toBlock] — a run
  * deliberately scans only its checkpoint-assigned window and does not
@@ -76,7 +101,8 @@ export async function ingest(
   prisma: IngestPrisma,
   params: IngestParams,
 ): Promise<IngestResult> {
-  const signals: NftMintSignal[] = [];
+  const nftMintSignals: NftMintSignal[] = [];
+  const tokenLaunchSignals: Erc20LaunchSignal[] = [];
 
   const creations = await chainAdapter.getRecentContractCreations(params.fromBlock, params.toBlock);
   const candidateAddresses: Address[] = creations.map((creation) => creation.address);
@@ -88,30 +114,57 @@ export async function ingest(
     if (known) continue;
 
     const tokenMetadata = await chainAdapter.getTokenMetadata(address);
-    if (tokenMetadata?.type !== "ERC-721") continue;
 
-    const mintLogs = await chainAdapter.getLogs({
-      fromBlock: params.fromBlock,
-      toBlock: params.toBlock,
-      address,
-      topics: [TRANSFER_EVENT_TOPIC, ZERO_ADDRESS_TOPIC, null],
-    });
-    if (mintLogs.length === 0) continue;
+    if (tokenMetadata?.type === "ERC-721") {
+      const mintLogs = await chainAdapter.getLogs({
+        fromBlock: params.fromBlock,
+        toBlock: params.toBlock,
+        address,
+        topics: [TRANSFER_EVENT_TOPIC, ZERO_ADDRESS_TOPIC, null],
+      });
+      if (mintLogs.length === 0) continue;
 
-    const [firstMint] = sortLogsByPosition(mintLogs);
-    if (!firstMint) continue;
+      const [firstMint] = sortLogsByPosition(mintLogs);
+      if (!firstMint) continue;
 
-    const mintTransaction = await chainAdapter.getTransaction(firstMint.transactionHash);
+      const mintTransaction = await chainAdapter.getTransaction(firstMint.transactionHash);
 
-    signals.push({
-      contractAddress: address,
-      tokenName: tokenMetadata.name,
-      tokenSymbol: tokenMetadata.symbol,
-      mintTransactionHash: firstMint.transactionHash,
-      mintBlockNumber: firstMint.blockNumber,
-      mintValue: mintTransaction?.value ?? 0n,
-    });
+      nftMintSignals.push({
+        contractAddress: address,
+        tokenName: tokenMetadata.name,
+        tokenSymbol: tokenMetadata.symbol,
+        mintTransactionHash: firstMint.transactionHash,
+        mintBlockNumber: firstMint.blockNumber,
+        mintValue: mintTransaction?.value ?? 0n,
+      });
+    } else if (tokenMetadata?.type === "ERC-20") {
+      // "First mint or transfer activity" — a mint-from-zero is itself a
+      // Transfer event, so an unrestricted topics[1]/[2] filter catches
+      // both in one query rather than needing a separate mint-specific
+      // check the way the ERC-721 branch does.
+      const activityLogs = await chainAdapter.getLogs({
+        fromBlock: params.fromBlock,
+        toBlock: params.toBlock,
+        address,
+        topics: [TRANSFER_EVENT_TOPIC, null, null],
+      });
+      if (activityLogs.length === 0) continue;
+
+      const [firstActivity] = sortLogsByPosition(activityLogs);
+      if (!firstActivity) continue;
+
+      const activityTransaction = await chainAdapter.getTransaction(firstActivity.transactionHash);
+
+      tokenLaunchSignals.push({
+        contractAddress: address,
+        tokenName: tokenMetadata.name,
+        tokenSymbol: tokenMetadata.symbol,
+        activityTransactionHash: firstActivity.transactionHash,
+        activityBlockNumber: firstActivity.blockNumber,
+        activityValue: activityTransaction?.value ?? 0n,
+      });
+    }
   }
 
-  return { nftMintSignals: signals, candidatesScanned: candidateAddresses.length };
+  return { nftMintSignals, tokenLaunchSignals, candidatesScanned: candidateAddresses.length };
 }

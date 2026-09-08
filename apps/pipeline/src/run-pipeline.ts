@@ -15,7 +15,8 @@ export interface PipelineDeps {
 
 export interface PipelineRunSummary {
   candidatesScanned: number;
-  mintSignalsFound: number;
+  nftMintSignalsFound: number;
+  tokenLaunchSignalsFound: number;
   opportunitiesCreated: number;
   opportunitiesDeduplicated: number;
 }
@@ -60,7 +61,8 @@ export async function runPipeline(
 
   return {
     candidatesScanned: ingestResult.candidatesScanned,
-    mintSignalsFound: ingestResult.nftMintSignals.length,
+    nftMintSignalsFound: ingestResult.nftMintSignals.length,
+    tokenLaunchSignalsFound: ingestResult.tokenLaunchSignals.length,
     opportunitiesCreated: resolveResult.createdOpportunityIds.length,
     opportunitiesDeduplicated: resolveResult.deduplicatedCount,
   };

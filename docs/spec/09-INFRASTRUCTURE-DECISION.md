@@ -143,6 +143,12 @@ Written down now so they are not surprises later.
   fastest. Add a retention job before they matter.
 - **GitHub Actions cron is best-effort** and can be delayed under platform
   load. Schedule for every 10 minutes and expect some runs at 12–15.
+
+  > UPDATED — see docs/decisions/0008-erc20-launch-detection.md. Raised
+  > MAX_BLOCKS_PER_RUN from 150 to 600 (a real run measured 150
+  > blocks/58s; ~600 fits a ~4-minute budget at that rate) to widen
+  > discovery coverage. Schedule for every **5** minutes, not 10, so the
+  > cron cadence keeps pace with the wider per-run window.
 - **Supabase + Prisma needs two connection strings** — the pooled connection
   (pgBouncer) for the application and a direct connection for migrations.
   Getting this wrong produces confusing migration failures.

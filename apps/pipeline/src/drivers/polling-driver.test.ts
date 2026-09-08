@@ -12,7 +12,8 @@ const { runPollingDriver } = await import("./polling-driver.js");
 
 const ZERO_SUMMARY: PipelineRunSummary = {
   candidatesScanned: 0,
-  mintSignalsFound: 0,
+  nftMintSignalsFound: 0,
+  tokenLaunchSignalsFound: 0,
   opportunitiesCreated: 0,
   opportunitiesDeduplicated: 0,
 };
@@ -177,7 +178,8 @@ describe("runPollingDriver logging", () => {
     const logSpy = vi.spyOn(console, "info").mockImplementation(() => {});
     runPipelineMock.mockResolvedValue({
       candidatesScanned: 3,
-      mintSignalsFound: 2,
+      nftMintSignalsFound: 1,
+      tokenLaunchSignalsFound: 1,
       opportunitiesCreated: 1,
       opportunitiesDeduplicated: 1,
     } satisfies PipelineRunSummary);
@@ -202,7 +204,8 @@ describe("runPollingDriver logging", () => {
       chain: "robinhood",
       newCheckpoint: "100",
       candidatesScanned: 3,
-      mintSignalsFound: 2,
+      nftMintSignalsFound: 1,
+      tokenLaunchSignalsFound: 1,
       opportunitiesCreated: 1,
       opportunitiesDeduplicated: 1,
     });

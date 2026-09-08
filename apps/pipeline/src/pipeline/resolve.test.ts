@@ -1,10 +1,14 @@
 import type { Address, Hex } from "viem";
 import { describe, expect, it, vi } from "vitest";
-import type { IngestResult, NftMintSignal } from "./ingest.js";
+import type { Erc20LaunchSignal, IngestResult, NftMintSignal } from "./ingest.js";
 import { resolve } from "./resolve.js";
 
 function ingestResultOf(signals: NftMintSignal[]): IngestResult {
-  return { nftMintSignals: signals, candidatesScanned: signals.length };
+  return { nftMintSignals: signals, tokenLaunchSignals: [], candidatesScanned: signals.length };
+}
+
+function tokenIngestResultOf(signals: Erc20LaunchSignal[]): IngestResult {
+  return { nftMintSignals: [], tokenLaunchSignals: signals, candidatesScanned: signals.length };
 }
 
 const SIGNAL: NftMintSignal = {
@@ -14,6 +18,16 @@ const SIGNAL: NftMintSignal = {
   mintTransactionHash: "0x81ccca91862af49223df904766cb29e87405b656bc565a90af69e73790e83432" as Hex,
   mintBlockNumber: 56_940_452n,
   mintValue: 0n,
+};
+
+const TOKEN_SIGNAL: Erc20LaunchSignal = {
+  contractAddress: "0x9781e25ccc7259d8fbfdc377d14ad51a894111c5" as Address,
+  tokenName: "SomeToken",
+  tokenSymbol: "SMT",
+  activityTransactionHash:
+    "0x279ea8bc44cd0ee8fc46192de0ae202c81f76c3982197add315d8690acda239d" as Hex,
+  activityBlockNumber: 57_615_421n,
+  activityValue: 0n,
 };
 
 function makePrisma() {
@@ -151,5 +165,60 @@ describe("resolve", () => {
     expect(result.createdOpportunityIds).toEqual([]);
     expect(result.deduplicatedCount).toBe(0);
     expect(prisma._rows.opportunities).toHaveLength(0);
+  });
+});
+
+describe("resolve — ERC-20 token launches", () => {
+  it("creates Project (TOKEN), Contract (ERC20), Opportunity (TOKEN_LAUNCH/TRADE_RESEARCH) and a DETECTED event", async () => {
+    const prisma = makePrisma();
+
+    const result = await resolve(prisma as never, tokenIngestResultOf([TOKEN_SIGNAL]), {
+      chain: "robinhood",
+    });
+
+    expect(result.createdOpportunityIds).toHaveLength(1);
+    expect(result.deduplicatedCount).toBe(0);
+    expect(prisma._rows.projects).toHaveLength(1);
+    expect(prisma._rows.projects[0]).toMatchObject({ projectType: "TOKEN" });
+    expect(prisma._rows.contracts).toHaveLength(1);
+    expect(prisma._rows.contracts[0]).toMatchObject({ contractType: "ERC20" });
+    expect(prisma._rows.opportunities[0]).toMatchObject({
+      type: "TOKEN_LAUNCH",
+      actionProfile: "TRADE_RESEARCH",
+    });
+    expect(prisma._rows.events).toHaveLength(1);
+    expect(prisma._rows.events[0]).toMatchObject({ eventType: "DETECTED" });
+  });
+
+  it("does not create a duplicate opportunity when the same token launch is seen twice (dedup)", async () => {
+    const prisma = makePrisma();
+
+    const first = await resolve(prisma as never, tokenIngestResultOf([TOKEN_SIGNAL]), {
+      chain: "robinhood",
+    });
+    const second = await resolve(prisma as never, tokenIngestResultOf([TOKEN_SIGNAL]), {
+      chain: "robinhood",
+    });
+
+    expect(first.createdOpportunityIds).toHaveLength(1);
+    expect(second.createdOpportunityIds).toHaveLength(0);
+    expect(second.deduplicatedCount).toBe(1);
+    expect(prisma._rows.opportunities).toHaveLength(1);
+  });
+
+  it("handles NFT mint signals and token launch signals together in one run", async () => {
+    const prisma = makePrisma();
+
+    const result = await resolve(
+      prisma as never,
+      { nftMintSignals: [SIGNAL], tokenLaunchSignals: [TOKEN_SIGNAL], candidatesScanned: 2 },
+      { chain: "robinhood" },
+    );
+
+    expect(result.createdOpportunityIds).toHaveLength(2);
+    expect(prisma._rows.opportunities.map((o) => o.type).sort()).toEqual([
+      "FREE_MINT",
+      "TOKEN_LAUNCH",
+    ]);
   });
 });

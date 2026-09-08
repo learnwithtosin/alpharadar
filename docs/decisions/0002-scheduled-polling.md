@@ -43,6 +43,16 @@ to ~15 minutes is accepted for the MVP in exchange for zero hosting cost.
 GitHub Actions cron is best-effort under platform load, so some runs may land
 at 12–15 minutes rather than the nominal 10.
 
+> UPDATED — see docs/decisions/0008-erc20-launch-detection.md. Two things
+> above no longer hold as stated. First, "coverage is unaffected — nothing
+> is lost, only delayed" was true when a run always caught up from the
+> checkpoint to the current head; it is no longer true — a run now scans
+> only its most recent MAX_BLOCKS_PER_RUN blocks and permanently skips
+> anything older than that if the poller falls behind, an explicit
+> accepted-gap tradeoff, not a bug (see checkpoint.ts's getNextRange).
+> Second, the cron cadence is 5 minutes, not 10 — kept in step with the
+> larger per-run block window this decision introduced.
+
 ## Upgrade path (not built now)
 
 When detection lag proves to be the thing limiting the product — and only

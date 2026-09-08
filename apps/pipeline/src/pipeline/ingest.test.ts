@@ -117,17 +117,17 @@ describe("ingest", () => {
     expect(chainAdapter.getTokenMetadata).not.toHaveBeenCalled();
   });
 
-  it("skips a candidate that isn't classified as ERC-721", async () => {
+  it("skips a candidate that isn't classified as ERC-721 or ERC-20", async () => {
     const chainAdapter = makeChainAdapter({
       candidates: [creationOf(CANDIDATE)],
       tokenMetadata: {
         address: CANDIDATE,
-        name: "SomeToken",
+        name: "SomeCollection",
         symbol: "STK",
-        decimals: 18,
-        totalSupply: 1n,
+        decimals: null,
+        totalSupply: null,
         holdersCount: 1,
-        type: "ERC-20",
+        type: "ERC-1155",
       },
     });
     const prisma = makePrisma();
@@ -135,6 +135,7 @@ describe("ingest", () => {
     const result = await ingest(chainAdapter, prisma as never, PARAMS);
 
     expect(result.nftMintSignals).toEqual([]);
+    expect(result.tokenLaunchSignals).toEqual([]);
     expect(chainAdapter.getLogs).not.toHaveBeenCalled();
   });
 
@@ -226,5 +227,125 @@ describe("ingest", () => {
     const result = await ingest(chainAdapter, prisma as never, PARAMS);
 
     expect(result.nftMintSignals[0]?.mintValue).toBe(0n);
+  });
+});
+
+// Real shape (address anonymized to CANDIDATE) confirmed live via the
+// base-rate survey: an ERC-20's ordinary (non-mint) Transfer log.
+const REAL_TRANSFER_LOG: ChainLog = {
+  address: CANDIDATE,
+  topics: [
+    "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+    "0x00000000000000000000000021201cd01f5780e521e9aba088930a1292a2ef67",
+    "0x0000000000000000000000009781e25ccc7259d8fbfdc377d14ad51a894111c5",
+  ],
+  data: "0x0000000000000000000000000000000000000000033b2e3c9fd0803ce8000000",
+  blockNumber: 57_615_421n,
+  transactionHash: "0x279ea8bc44cd0ee8fc46192de0ae202c81f76c3982197add315d8690acda239d",
+  logIndex: 12,
+};
+
+describe("ingest — ERC-20 token launch detection", () => {
+  it("produces a token launch signal for a newly-discovered ERC-20 with a mint (Transfer from zero)", async () => {
+    const chainAdapter = makeChainAdapter({
+      candidates: [creationOf(CANDIDATE)],
+      tokenMetadata: {
+        address: CANDIDATE,
+        name: "SomeToken",
+        symbol: "SMT",
+        decimals: 18,
+        totalSupply: 1_000_000n,
+        holdersCount: 1,
+        type: "ERC-20",
+      },
+      logs: [REAL_MINT_LOG],
+      txValue: 0n,
+    });
+    const prisma = makePrisma();
+
+    const result = await ingest(chainAdapter, prisma as never, PARAMS);
+
+    expect(result.tokenLaunchSignals).toEqual([
+      {
+        contractAddress: CANDIDATE,
+        tokenName: "SomeToken",
+        tokenSymbol: "SMT",
+        activityTransactionHash: REAL_MINT_LOG.transactionHash,
+        activityBlockNumber: REAL_MINT_LOG.blockNumber,
+        activityValue: 0n,
+      },
+    ]);
+    expect(result.nftMintSignals).toEqual([]);
+  });
+
+  it("also produces a token launch signal for an ordinary (non-mint) transfer — 'mint or transfer'", async () => {
+    const chainAdapter = makeChainAdapter({
+      candidates: [creationOf(CANDIDATE)],
+      tokenMetadata: {
+        address: CANDIDATE,
+        name: "SomeToken",
+        symbol: "SMT",
+        decimals: 18,
+        totalSupply: 1_000_000n,
+        holdersCount: 2,
+        type: "ERC-20",
+      },
+      logs: [REAL_TRANSFER_LOG],
+      txValue: 0n,
+    });
+    const prisma = makePrisma();
+
+    const result = await ingest(chainAdapter, prisma as never, PARAMS);
+
+    expect(result.tokenLaunchSignals).toHaveLength(1);
+    expect(result.tokenLaunchSignals[0]?.activityTransactionHash).toBe(
+      REAL_TRANSFER_LOG.transactionHash,
+    );
+  });
+
+  it("requests an unrestricted Transfer filter for ERC-20 (not scoped to the zero address like ERC-721 mint detection)", async () => {
+    const chainAdapter = makeChainAdapter({
+      candidates: [creationOf(CANDIDATE)],
+      tokenMetadata: {
+        address: CANDIDATE,
+        name: "SomeToken",
+        symbol: "SMT",
+        decimals: 18,
+        totalSupply: 1_000_000n,
+        holdersCount: 1,
+        type: "ERC-20",
+      },
+      logs: [],
+    });
+    const prisma = makePrisma();
+
+    await ingest(chainAdapter, prisma as never, PARAMS);
+
+    expect(chainAdapter.getLogs).toHaveBeenCalledWith(
+      expect.objectContaining({
+        topics: ["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", null, null],
+      }),
+    );
+  });
+
+  it("skips an ERC-20 with no activity in this run's block range", async () => {
+    const chainAdapter = makeChainAdapter({
+      candidates: [creationOf(CANDIDATE)],
+      tokenMetadata: {
+        address: CANDIDATE,
+        name: "QuietToken",
+        symbol: "QUIET",
+        decimals: 18,
+        totalSupply: 1_000_000n,
+        holdersCount: 0,
+        type: "ERC-20",
+      },
+      logs: [],
+    });
+    const prisma = makePrisma();
+
+    const result = await ingest(chainAdapter, prisma as never, PARAMS);
+
+    expect(result.tokenLaunchSignals).toEqual([]);
   });
 });

@@ -52,13 +52,16 @@ const envSchema = z.object({
   POLL_BLOCK_CHUNK_SIZE: z.coerce.number().int().positive().default(1000),
   // Discovery scans one block per unbatched eth_getBlockReceipts RPC call —
   // batching this call was proven live not to hold up under sustained load
-  // (see ChainAdapter.getRecentContractCreations). At the measured safe
-  // rate (~3.1-3.2 blocks/sec, unbatched sequential), 150 blocks costs
-  // ~47s, leaving headroom in a run for enrichment reads and retries
-  // within a ~60s budget. A run scans only the most recent
-  // MAX_BLOCKS_PER_RUN blocks and does not backfill beyond that — see
-  // checkpoint.ts's getNextRange.
-  MAX_BLOCKS_PER_RUN: z.coerce.number().int().positive().default(150),
+  // (see ChainAdapter.getRecentContractCreations). A real run measured
+  // 150 blocks in 58s (~2.59 blocks/sec end-to-end, including enrichment
+  // reads and DB writes — slower than the synthetic RPC-only probe's
+  // ~3.1/s). At that rate, ~4 minutes' budget is a ceiling of ~621
+  // blocks; 600 leaves a small margin. See
+  // docs/decisions/0008-erc20-launch-detection.md. Cron cadence dropped
+  // to every 5 minutes accordingly (docs/spec/09-INFRASTRUCTURE-DECISION.md
+  // §8). A run scans only the most recent MAX_BLOCKS_PER_RUN blocks and
+  // does not backfill beyond that — see checkpoint.ts's getNextRange.
+  MAX_BLOCKS_PER_RUN: z.coerce.number().int().positive().default(600),
   ALERT_MIN_SCORE: z.coerce.number().int().min(0).max(100).default(60),
   ALERT_MAX_PER_USER_PER_HOUR: z.coerce.number().int().positive().default(6),
 

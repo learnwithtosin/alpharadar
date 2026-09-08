@@ -1,6 +1,6 @@
 import type { Contract, PrismaClient, Project } from "@alpharadar/database";
 import { findOrCreateOpportunity } from "./opportunity-dedup.js";
-import type { IngestResult, NftMintSignal } from "./ingest.js";
+import type { Erc20LaunchSignal, IngestResult, NftMintSignal } from "./ingest.js";
 
 type ResolvePrisma = Pick<
   PrismaClient,
@@ -73,6 +73,52 @@ function titleFor(signal: NftMintSignal): string {
   return signal.mintValue > 0n ? `${name} mint detected` : `${name} free mint detected`;
 }
 
+async function findOrCreateTokenProject(
+  prisma: ResolvePrisma,
+  chain: string,
+  signal: Erc20LaunchSignal,
+): Promise<Project> {
+  const slug = projectSlugFor(signal.contractAddress);
+  const existing = await prisma.project.findUnique({ where: { slug } });
+  if (existing) return existing;
+
+  return prisma.project.create({
+    data: {
+      name: signal.tokenName ?? signal.tokenSymbol ?? signal.contractAddress,
+      slug,
+      chain,
+      projectType: "TOKEN",
+      status: "ACTIVE",
+    },
+  });
+}
+
+async function findOrCreateTokenContract(
+  prisma: ResolvePrisma,
+  projectId: string,
+  chain: string,
+  signal: Erc20LaunchSignal,
+): Promise<Contract> {
+  const existing = await prisma.contract.findUnique({
+    where: { chain_address: { chain, address: signal.contractAddress } },
+  });
+  if (existing) return existing;
+
+  return prisma.contract.create({
+    data: {
+      projectId,
+      chain,
+      address: signal.contractAddress,
+      contractType: "ERC20",
+    },
+  });
+}
+
+function tokenLaunchTitleFor(signal: Erc20LaunchSignal): string {
+  const name = signal.tokenName ?? signal.tokenSymbol ?? signal.contractAddress;
+  return `${name} token launch detected`;
+}
+
 /**
  * 04 Phase 4 / 09 §6's "opportunity-resolution" stage: project resolution,
  * contract resolution, opportunity creation, deduplication. Every write
@@ -112,6 +158,40 @@ export async function resolve(
             mintTransactionHash: signal.mintTransactionHash,
             mintBlockNumber: signal.mintBlockNumber.toString(),
             mintValue: signal.mintValue.toString(),
+          },
+        },
+      });
+      createdOpportunityIds.push(opportunity.id);
+    } else {
+      deduplicatedCount++;
+    }
+  }
+
+  for (const signal of ingestResult.tokenLaunchSignals) {
+    const project = await findOrCreateTokenProject(prisma, params.chain, signal);
+    await findOrCreateTokenContract(prisma, project.id, params.chain, signal);
+
+    const { opportunity, created } = await findOrCreateOpportunity(prisma, {
+      chain: params.chain,
+      contractAddress: signal.contractAddress,
+      type: "TOKEN_LAUNCH",
+      // Not MINT — an ERC-20 launch isn't something a user mints the way an
+      // NFT is; the natural next action is research/trade.
+      actionProfile: "TRADE_RESEARCH",
+      projectId: project.id,
+      title: tokenLaunchTitleFor(signal),
+      detectedAt: new Date(),
+    });
+
+    if (created) {
+      await prisma.opportunityEvent.create({
+        data: {
+          opportunityId: opportunity.id,
+          eventType: "DETECTED",
+          payload: {
+            activityTransactionHash: signal.activityTransactionHash,
+            activityBlockNumber: signal.activityBlockNumber.toString(),
+            activityValue: signal.activityValue.toString(),
           },
         },
       });
