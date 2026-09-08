@@ -26,6 +26,14 @@ export const robinhoodChain = defineChain({
   id: ROBINHOOD_CHAIN_ID,
   name: "Robinhood Chain",
   nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+  // Metadata only — viem's Chain type requires a non-empty rpcUrls, but
+  // this value is never actually used to make a request. Confirmed against
+  // viem's own source: createClient/createPublicClient never reads
+  // chain.rpcUrls when an explicit `transport` is supplied, which
+  // RobinhoodAdapter always does. ROBINHOOD_RPC_URL (via
+  // RobinhoodAdapterOptions.rpcUrl, passed into createRpcProvider) is the
+  // single source of truth for which endpoint is actually called — swap it
+  // via env, not here.
   rpcUrls: {
     default: { http: ["https://rpc.mainnet.chain.robinhood.com"] },
   },

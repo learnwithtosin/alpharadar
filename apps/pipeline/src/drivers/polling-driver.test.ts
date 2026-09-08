@@ -1,4 +1,4 @@
-import type { ChainAdapter } from "@alpharadar/chain";
+import { CloudflareChallengeError, type ChainAdapter } from "@alpharadar/chain";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PipelineRunSummary } from "../run-pipeline.js";
 
@@ -276,6 +276,88 @@ describe("runPollingDriver logging", () => {
       fromBlock: "100",
       toBlock: "100",
     });
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+
+  it("logs a loud, distinctly-named pipeline.rpc.challenged line (in addition to pipeline.run.failed) when a CloudflareChallengeError persists mid-run", async () => {
+    const logSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const challengeError = new CloudflareChallengeError(
+      "RPC endpoint is challenging this request (eth_getBlockReceipts) — Cloudflare returned a managed-challenge response instead of a JSON-RPC result.",
+      "eth_getBlockReceipts",
+      403,
+    );
+    runPipelineMock.mockRejectedValueOnce(challengeError);
+    const prisma = makeFakePrisma();
+    const chainAdapter = makeChainAdapter(100n);
+
+    await expect(
+      runPollingDriver({
+        prisma: prisma as never,
+        chainAdapter,
+        chain: "robinhood",
+        maxBlocksPerRun: UNBOUNDED_WINDOW,
+      }),
+    ).rejects.toThrow(CloudflareChallengeError);
+
+    const errorEvents = loggedEvents(errorSpy);
+    expect(errorEvents.map((e) => e.event)).toEqual([
+      "pipeline.rpc.challenged",
+      "pipeline.run.failed",
+    ]);
+    expect(errorEvents[0]).toMatchObject({
+      event: "pipeline.rpc.challenged",
+      errorName: "CloudflareChallengeError",
+      rpcMethod: "eth_getBlockReceipts",
+      httpStatus: 403,
+      chain: "robinhood",
+      fromBlock: "100",
+      toBlock: "100",
+    });
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+
+  it("still records recordRunFailure and logs cleanly when the challenge happens on the very first call, before any range is computed", async () => {
+    const logSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const challengeError = new CloudflareChallengeError(
+      "RPC endpoint is challenging this request (eth_blockNumber).",
+      "eth_blockNumber",
+      403,
+    );
+    const chainAdapter = {
+      getLatestBlockNumber: vi.fn().mockRejectedValue(challengeError),
+    } as unknown as ChainAdapter;
+    const prisma = makeFakePrisma();
+
+    await expect(
+      runPollingDriver({
+        prisma: prisma as never,
+        chainAdapter,
+        chain: "robinhood",
+        maxBlocksPerRun: UNBOUNDED_WINDOW,
+      }),
+    ).rejects.toThrow(CloudflareChallengeError);
+
+    // No range was ever computed — must not throw trying to read
+    // range.fromBlock, and recordRunFailure must still have been attempted
+    // (a safe no-op here, since this is the very first run and there's no
+    // checkpoint row yet to mark FAILED — see checkpoint.ts).
+    expect(prisma.ingestionCheckpoint.updateMany).toHaveBeenCalledWith({
+      where: { chain: "robinhood" },
+      data: expect.objectContaining({ lastRunStatus: "FAILED" }),
+    });
+    const errorEvents = loggedEvents(errorSpy);
+    expect(errorEvents.map((e) => e.event)).toEqual([
+      "pipeline.rpc.challenged",
+      "pipeline.run.failed",
+    ]);
+    // JSON.stringify drops undefined-valued keys entirely — confirms this
+    // didn't crash trying to read range.fromBlock on a null range.
+    expect(errorEvents[0]).not.toHaveProperty("fromBlock");
+    expect(errorEvents[0]).not.toHaveProperty("toBlock");
     logSpy.mockRestore();
     errorSpy.mockRestore();
   });

@@ -29,3 +29,42 @@ export class BlockscoutHttpError extends Error {
     this.retryAfterMs = retryAfterMs;
   }
 }
+
+/**
+ * The RPC endpoint served a Cloudflare managed-challenge response (a 403
+ * with `cf-mitigated: challenge`, or an HTML "Just a moment..." body where
+ * JSON-RPC was expected) instead of an actual RPC response. Deliberately a
+ * distinct, named class — not a generic HTTP or parse error — so this
+ * failure mode is unmistakable in a log line rather than looking like a
+ * malformed-response bug. Confirmed live (this session): intermittent,
+ * could not be reproduced on demand across 200 sequential
+ * eth_getBlockReceipts calls — see
+ * docs/decisions/0009-rpc-cloudflare-challenge.md.
+ */
+export class CloudflareChallengeError extends Error {
+  readonly method: string;
+  readonly httpStatus: number | undefined;
+
+  constructor(message: string, method: string, httpStatus?: number) {
+    super(message);
+    this.name = "CloudflareChallengeError";
+    this.method = method;
+    this.httpStatus = httpStatus;
+  }
+}
+
+/**
+ * A non-2xx, non-challenge response from the RPC endpoint (429/5xx) —
+ * transient, unlike a real JSON-RPC error (bad params, etc.), which is
+ * thrown as a plain Error and never retried. Mirrors BlockscoutHttpError's
+ * shape for the same reason: the retry loop needs the status to decide.
+ */
+export class RpcHttpError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "RpcHttpError";
+    this.status = status;
+  }
+}

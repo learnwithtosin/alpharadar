@@ -1,6 +1,11 @@
-import type { ChainAdapter } from "@alpharadar/chain";
+import { CloudflareChallengeError, type ChainAdapter } from "@alpharadar/chain";
 import type { PrismaClient } from "@alpharadar/database";
-import { advanceCheckpoint, getNextRange, recordRunFailure } from "../checkpoint.js";
+import {
+  advanceCheckpoint,
+  getNextRange,
+  recordRunFailure,
+  type CheckpointRange,
+} from "../checkpoint.js";
 import { log } from "../logger.js";
 import { runPipeline } from "../run-pipeline.js";
 
@@ -24,26 +29,33 @@ export interface PollingDriverDeps {
  * catch block never even runs — the checkpoint is left exactly where it
  * was, so the next invocation's getNextRange re-derives the same range
  * instead of skipping it.
+ *
+ * getLatestBlockNumber() and getNextRange() are inside the same try block
+ * as the pipeline run itself — a failure on the very first RPC call of a
+ * run (e.g. the RPC endpoint challenging us before we've even computed a
+ * range) must still hit recordRunFailure and the structured log below, not
+ * bypass them and land as a raw, unstructured console dump.
  */
 export async function runPollingDriver(deps: PollingDriverDeps): Promise<void> {
   log.info("pipeline.run.start", { chain: deps.chain });
 
-  const currentHead = await deps.chainAdapter.getLatestBlockNumber();
-  const range = await getNextRange(deps.prisma, deps.chain, currentHead, deps.maxBlocksPerRun);
-
-  if (range === null) {
-    log.info("pipeline.run.no_new_blocks", { chain: deps.chain, currentHead });
-    return;
-  }
-
-  log.info("pipeline.run.range", {
-    chain: deps.chain,
-    fromBlock: range.fromBlock,
-    toBlock: range.toBlock,
-    blockCount: range.toBlock - range.fromBlock + 1n,
-  });
-
+  let range: CheckpointRange | null = null;
   try {
+    const currentHead = await deps.chainAdapter.getLatestBlockNumber();
+    range = await getNextRange(deps.prisma, deps.chain, currentHead, deps.maxBlocksPerRun);
+
+    if (range === null) {
+      log.info("pipeline.run.no_new_blocks", { chain: deps.chain, currentHead });
+      return;
+    }
+
+    log.info("pipeline.run.range", {
+      chain: deps.chain,
+      fromBlock: range.fromBlock,
+      toBlock: range.toBlock,
+      blockCount: range.toBlock - range.fromBlock + 1n,
+    });
+
     const summary = await runPipeline(range.fromBlock, range.toBlock, {
       prisma: deps.prisma,
       chainAdapter: deps.chainAdapter,
@@ -70,10 +82,26 @@ export async function runPollingDriver(deps: PollingDriverDeps): Promise<void> {
       deps.chain,
       error instanceof Error ? error.message : String(error),
     );
+
+    // A loud, distinctly-named, greppable line — not just a field inside
+    // the generic failure log below — so this reads unmistakably in a
+    // GitHub Actions log rather than looking like an application bug.
+    if (error instanceof CloudflareChallengeError) {
+      log.error("pipeline.rpc.challenged", error, {
+        chain: deps.chain,
+        rpcMethod: error.method,
+        httpStatus: error.httpStatus,
+        fromBlock: range?.fromBlock,
+        toBlock: range?.toBlock,
+        message:
+          "The RPC endpoint is actively serving a Cloudflare challenge instead of responding to requests.",
+      });
+    }
+
     log.error("pipeline.run.failed", error, {
       chain: deps.chain,
-      fromBlock: range.fromBlock,
-      toBlock: range.toBlock,
+      fromBlock: range?.fromBlock,
+      toBlock: range?.toBlock,
     });
     throw error;
   }

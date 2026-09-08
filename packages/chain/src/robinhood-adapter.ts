@@ -1,9 +1,9 @@
 import {
   createPublicClient,
+  custom,
   getAddress,
   hexToBigInt,
   hexToNumber,
-  http,
   numberToHex,
   TransactionNotFoundError,
   TransactionReceiptNotFoundError,
@@ -17,6 +17,7 @@ import type { ChainAdapter } from "./chain-adapter.js";
 import { chunkBlockRange } from "./chunk-block-range.js";
 import { NotImplementedError } from "./errors.js";
 import { ROBINHOOD_CHAIN_ID, robinhoodChain } from "./robinhood-chain-definition.js";
+import { createRpcProvider } from "./rpc-client.js";
 import type {
   AddressTransaction,
   ChainBlock,
@@ -41,6 +42,7 @@ export interface RobinhoodAdapterOptions {
   explorerUrl?: string;
   /** Default 1000 — mirrors POLL_BLOCK_CHUNK_SIZE in docs/spec/09-INFRASTRUCTURE-DECISION.md §9. */
   pollBlockChunkSize?: bigint;
+  /** Max attempts for a single RPC call before giving up — covers both a Cloudflare challenge and a plain 429/5xx. Default 5. See rpc-client.ts. */
   rpcRetryCount?: number;
   blockscoutOptions?: Partial<Omit<BlockscoutClientOptions, "baseUrl">>;
   /** Test-only: inject a viem client instead of creating one from rpcUrl. */
@@ -254,12 +256,18 @@ export class RobinhoodAdapter implements ChainAdapter {
       options.publicClient ??
       createPublicClient({
         chain: robinhoodChain,
-        transport: http(options.rpcUrl, {
-          // The public RPC is documented as rate limited (08 §2.3); viem's
-          // http transport already retries with backoff on 429/5xx, so RPC
-          // calls don't need a hand-rolled retry loop the way Blockscout does.
-          retryCount: options.rpcRetryCount ?? 5,
-        }),
+        // A custom transport, not viem's own http() — this routes every
+        // RPC call (viem's high-level actions and this adapter's raw
+        // client.request() calls alike) through createRpcProvider, which
+        // detects a Cloudflare managed-challenge response distinctly from
+        // an ordinary HTTP failure and retries both it and 429/5xx with
+        // backoff. See rpc-client.ts's doc comment for why viem's own
+        // http() transport isn't enough here — it can't tell a challenge
+        // page apart from a normal response, so it would either fail
+        // opaquely or (worse) try to parse HTML as JSON-RPC.
+        transport: custom(
+          createRpcProvider({ rpcUrl: options.rpcUrl, maxAttempts: options.rpcRetryCount ?? 5 }),
+        ),
       });
     this.blockscout =
       options.blockscoutClient ??

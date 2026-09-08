@@ -28,4 +28,10 @@ export { BlockscoutClient, DEFAULT_USER_AGENT } from "./blockscout-client.js";
 export type { BlockscoutClientOptions, BlockscoutGetOptions } from "./blockscout-client.js";
 
 export { chunkBlockRange, type BlockRange } from "./chunk-block-range.js";
-export { NotImplementedError, BlockscoutHttpError } from "./errors.js";
+export {
+  NotImplementedError,
+  BlockscoutHttpError,
+  CloudflareChallengeError,
+  RpcHttpError,
+} from "./errors.js";
+export { createRpcProvider, isCloudflareChallengeResponse } from "./rpc-client.js";
