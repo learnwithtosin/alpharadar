@@ -349,3 +349,50 @@ describe("ingest — ERC-20 token launch detection", () => {
     expect(result.tokenLaunchSignals).toEqual([]);
   });
 });
+
+describe("ingest — per-candidate resilience", () => {
+  const OTHER_CANDIDATE = "0x9781e25ccc7259d8fbfdc377d14ad51a894111c5" as Address;
+
+  it("a single candidate's enrichment throwing degrades it to failed and does not abort the run", async () => {
+    const chainAdapter = {
+      getRecentContractCreations: vi
+        .fn()
+        .mockResolvedValue([creationOf(CANDIDATE), creationOf(OTHER_CANDIDATE)]),
+      getTokenMetadata: vi.fn().mockImplementation(async (address: Address) => {
+        if (address === CANDIDATE) throw new Error("Blockscout unreachable (simulated)");
+        return {
+          address,
+          name: "GoodToken",
+          symbol: "GOOD",
+          decimals: null,
+          totalSupply: null,
+          holdersCount: null,
+          type: "ERC-721",
+        };
+      }),
+      getLogs: vi.fn().mockResolvedValue([REAL_MINT_LOG]),
+      getTransaction: vi.fn().mockResolvedValue({ value: 0n }),
+    } as unknown as ChainAdapter;
+    const prisma = makePrisma();
+
+    const result = await ingest(chainAdapter, prisma as never, PARAMS);
+
+    expect(result.candidatesScanned).toBe(2);
+    expect(result.candidatesFailed).toBe(1);
+    // The second, healthy candidate was still fully processed — one bad
+    // candidate doesn't take the rest of the batch down with it.
+    expect(result.nftMintSignals).toHaveLength(1);
+    expect(result.nftMintSignals[0]?.contractAddress).toBe(OTHER_CANDIDATE);
+  });
+
+  it("a discovery-level failure (not per-candidate) still propagates and is not swallowed", async () => {
+    const chainAdapter = {
+      getRecentContractCreations: vi.fn().mockRejectedValue(new Error("RPC endpoint unreachable")),
+    } as unknown as ChainAdapter;
+    const prisma = makePrisma();
+
+    await expect(ingest(chainAdapter, prisma as never, PARAMS)).rejects.toThrow(
+      "RPC endpoint unreachable",
+    );
+  });
+});

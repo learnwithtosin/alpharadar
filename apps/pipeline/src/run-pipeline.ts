@@ -15,6 +15,8 @@ export interface PipelineDeps {
 
 export interface PipelineRunSummary {
   candidatesScanned: number;
+  /** Candidates whose enrichment threw and were skipped rather than aborting the run — see ingest.ts. */
+  candidatesFailed: number;
   nftMintSignalsFound: number;
   tokenLaunchSignalsFound: number;
   opportunitiesCreated: number;
@@ -61,6 +63,7 @@ export async function runPipeline(
 
   return {
     candidatesScanned: ingestResult.candidatesScanned,
+    candidatesFailed: ingestResult.candidatesFailed,
     nftMintSignalsFound: ingestResult.nftMintSignals.length,
     tokenLaunchSignalsFound: ingestResult.tokenLaunchSignals.length,
     opportunitiesCreated: resolveResult.createdOpportunityIds.length,

@@ -307,6 +307,137 @@ describe("RobinhoodAdapter — RPC-backed methods", () => {
   });
 });
 
+const ERC721_INTERFACE_ID = "0x80ac58cd";
+const ERC1155_INTERFACE_ID = "0xd9b67a26";
+
+/**
+ * Dispatches by functionName/args the way a real eth_call-backed
+ * readContract would. Any function not given a response reverts — matching
+ * the real behavior an unimplemented/optional function has on-chain, which
+ * is exactly the case getTokenMetadata's classification logic depends on.
+ */
+function makeReadContractMock(responses: {
+  supportsErc721?: boolean;
+  supportsErc1155?: boolean;
+  name?: string;
+  symbol?: string;
+  decimals?: number;
+  totalSupply?: bigint;
+}) {
+  return vi
+    .fn()
+    .mockImplementation(async (args: { functionName: string; args?: readonly unknown[] }) => {
+      if (args.functionName === "supportsInterface") {
+        const [interfaceId] = args.args as [string];
+        if (interfaceId === ERC721_INTERFACE_ID) {
+          if (responses.supportsErc721 === undefined) throw new Error("revert");
+          return responses.supportsErc721;
+        }
+        if (interfaceId === ERC1155_INTERFACE_ID) {
+          if (responses.supportsErc1155 === undefined) throw new Error("revert");
+          return responses.supportsErc1155;
+        }
+        throw new Error(`unexpected interfaceId ${interfaceId}`);
+      }
+      const key = args.functionName as "name" | "symbol" | "decimals" | "totalSupply";
+      if (responses[key] === undefined) throw new Error("revert");
+      return responses[key];
+    });
+}
+
+describe("RobinhoodAdapter — getTokenMetadata (pure RPC classification, no Blockscout)", () => {
+  it("classifies ERC-721 via ERC-165 supportsInterface, decimals/totalSupply null, holdersCount always null", async () => {
+    const readContract = makeReadContractMock({
+      supportsErc721: true,
+      name: "CookLauncherToken",
+      symbol: "COOK",
+    });
+    const adapter = makeAdapter({ publicClient: { readContract } });
+
+    await expect(adapter.getTokenMetadata(ADDRESS)).resolves.toEqual({
+      address: ADDRESS,
+      name: "CookLauncherToken",
+      symbol: "COOK",
+      decimals: null,
+      totalSupply: null,
+      holdersCount: null,
+      type: "ERC-721",
+    });
+  });
+
+  it("classifies ERC-1155 via ERC-165 when ERC-721's interface ID doesn't match", async () => {
+    const readContract = makeReadContractMock({
+      supportsErc721: false,
+      supportsErc1155: true,
+      name: "SomeCollection",
+      symbol: "SC",
+    });
+    const adapter = makeAdapter({ publicClient: { readContract } });
+
+    await expect(adapter.getTokenMetadata(ADDRESS)).resolves.toMatchObject({ type: "ERC-1155" });
+  });
+
+  it("falls back to ERC-20 (via decimals()) when ERC-165 supportsInterface reverts entirely — most contracts don't implement it", async () => {
+    const readContract = makeReadContractMock({
+      name: "Chainlink",
+      symbol: "LINK",
+      decimals: 18,
+      totalSupply: 145_051_493_188_200_885_459n,
+    });
+    const adapter = makeAdapter({ publicClient: { readContract } });
+
+    await expect(adapter.getTokenMetadata(ADDRESS)).resolves.toEqual({
+      address: ADDRESS,
+      name: "Chainlink",
+      symbol: "LINK",
+      decimals: 18,
+      totalSupply: 145_051_493_188_200_885_459n,
+      holdersCount: null,
+      type: "ERC-20",
+    });
+  });
+
+  it("treats decimals() = 0 as a real value, not a failure", async () => {
+    const readContract = makeReadContractMock({ name: "Zero", symbol: "ZRO", decimals: 0 });
+    const adapter = makeAdapter({ publicClient: { readContract } });
+
+    await expect(adapter.getTokenMetadata(ADDRESS)).resolves.toMatchObject({
+      type: "ERC-20",
+      decimals: 0,
+    });
+  });
+
+  it("returns null when neither ERC-165 nor decimals() resolves — not a token this adapter can classify", async () => {
+    const readContract = makeReadContractMock({});
+    const adapter = makeAdapter({ publicClient: { readContract } });
+
+    await expect(adapter.getTokenMetadata(ADDRESS)).resolves.toBeNull();
+  });
+
+  it("degrades name/symbol to null individually rather than failing the whole call when they revert", async () => {
+    const readContract = makeReadContractMock({ decimals: 6, totalSupply: 1_000_000n });
+    const adapter = makeAdapter({ publicClient: { readContract } });
+
+    await expect(adapter.getTokenMetadata(ADDRESS)).resolves.toMatchObject({
+      name: null,
+      symbol: null,
+      decimals: 6,
+      totalSupply: 1_000_000n,
+      type: "ERC-20",
+    });
+  });
+
+  it("never calls Blockscout — no fetchImpl call at all", async () => {
+    const readContract = makeReadContractMock({ decimals: 18 });
+    const fetchImpl = vi.fn();
+    const adapter = makeAdapter({ publicClient: { readContract }, fetchImpl });
+
+    await adapter.getTokenMetadata(ADDRESS);
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+});
+
 describe("RobinhoodAdapter — Blockscout-backed methods", () => {
   it("getRecentlyVerifiedContracts maps the newest-first list and passes the cursor through", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(
@@ -329,31 +460,6 @@ describe("RobinhoodAdapter — Blockscout-backed methods", () => {
         { address: "0xdef", name: null, verifiedAt: "2026-09-07T16:22:53Z" },
       ],
       nextCursor: { items_count: 50, smart_contract_id: 1020486 },
-    });
-  });
-
-  it("getTokenMetadata converts string decimals/supply/holders to numeric types", async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(
-      jsonResponse(200, {
-        address_hash: ADDRESS,
-        name: "Chainlink",
-        symbol: "LINK",
-        decimals: "18",
-        total_supply: "145051493188200885459",
-        holders_count: "41",
-        type: "ERC-20",
-      }),
-    );
-    const adapter = makeAdapter({ fetchImpl });
-
-    await expect(adapter.getTokenMetadata(ADDRESS)).resolves.toEqual({
-      address: ADDRESS,
-      name: "Chainlink",
-      symbol: "LINK",
-      decimals: 18,
-      totalSupply: 145051493188200885459n,
-      holdersCount: 41,
-      type: "ERC-20",
     });
   });
 

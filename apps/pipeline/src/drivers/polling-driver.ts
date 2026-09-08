@@ -57,6 +57,7 @@ export async function runPollingDriver(deps: PollingDriverDeps): Promise<void> {
       toBlock: range.toBlock,
       newCheckpoint: range.toBlock,
       candidatesScanned: summary.candidatesScanned,
+      candidatesFailed: summary.candidatesFailed,
       nftMintSignalsFound: summary.nftMintSignalsFound,
       tokenLaunchSignalsFound: summary.tokenLaunchSignalsFound,
       opportunitiesCreated: summary.opportunitiesCreated,

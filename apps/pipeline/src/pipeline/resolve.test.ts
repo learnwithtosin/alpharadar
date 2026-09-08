@@ -4,11 +4,21 @@ import type { Erc20LaunchSignal, IngestResult, NftMintSignal } from "./ingest.js
 import { resolve } from "./resolve.js";
 
 function ingestResultOf(signals: NftMintSignal[]): IngestResult {
-  return { nftMintSignals: signals, tokenLaunchSignals: [], candidatesScanned: signals.length };
+  return {
+    nftMintSignals: signals,
+    tokenLaunchSignals: [],
+    candidatesScanned: signals.length,
+    candidatesFailed: 0,
+  };
 }
 
 function tokenIngestResultOf(signals: Erc20LaunchSignal[]): IngestResult {
-  return { nftMintSignals: [], tokenLaunchSignals: signals, candidatesScanned: signals.length };
+  return {
+    nftMintSignals: [],
+    tokenLaunchSignals: signals,
+    candidatesScanned: signals.length,
+    candidatesFailed: 0,
+  };
 }
 
 const SIGNAL: NftMintSignal = {
@@ -211,7 +221,12 @@ describe("resolve — ERC-20 token launches", () => {
 
     const result = await resolve(
       prisma as never,
-      { nftMintSignals: [SIGNAL], tokenLaunchSignals: [TOKEN_SIGNAL], candidatesScanned: 2 },
+      {
+        nftMintSignals: [SIGNAL],
+        tokenLaunchSignals: [TOKEN_SIGNAL],
+        candidatesScanned: 2,
+        candidatesFailed: 0,
+      },
       { chain: "robinhood" },
     );
 

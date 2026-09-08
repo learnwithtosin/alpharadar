@@ -51,6 +51,28 @@ early-detection product cannot target an event this chain isn't
 producing. ERC-20 launches are themselves rare (~1 in 3,000 blocks in
 this sample) but real, observed, and non-zero.
 
+> UPDATED — re-verified after a production run reported 19 creations in
+> 600 blocks (31.7/1,000), ~7x this survey's rate. Checked mechanically
+> whether Blockscout classification failures explained it — they can't:
+> "total creations" comes entirely from `getRecentContractCreations`
+> (raw block-receipt scanning), which never called Blockscout in either
+> survey; classification only affects the type split, not the count.
+> Re-ran the same 20-window/3,000-block methodology through the real
+> `RobinhoodAdapter` end-to-end (RPC-only classification, zero
+> Blockscout calls): **34 creations/3,000 blocks (11.33/1,000,
+> ~404/hour), ERC-721 still 0, ERC-20 6 (2.0/1,000, ~71.3/hour), 28 not
+> a token.** Per-window counts ranged 0–5 (0–33/1,000) *within this one
+> survey* — a wider spread than the gap between the two surveys'
+> averages. Conclusion: this chain's deployment activity is genuinely
+> bursty, not a measurement artifact; the table above is a snapshot, not
+> a stable constant. **ERC-721-absent holds — now confirmed across a
+> doubled, methodologically cleaner combined sample (6,000 blocks, 48
+> creations, 0 ERC-721) — so the core decision stands.** The rate
+> figures in the table are stale on the low side; treat ~11/1,000 total
+> and ~2/1,000 ERC-20 (~71/hour) as the more current estimate.
+> `MAX_BLOCKS_PER_RUN` is unaffected — it's sized by RPC throughput, not
+> base rate (see below).
+
 ## Why keep the ERC-721 path instead of deleting it
 
 Zero-in-a-3-hour-sample is not zero-forever. Ripping the detector out

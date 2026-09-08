@@ -59,16 +59,6 @@ interface RawAddressRef {
   hash: string;
 }
 
-interface RawTokenResponse {
-  address_hash: string;
-  name: string | null;
-  symbol: string | null;
-  decimals: string | null;
-  total_supply: string | null;
-  holders_count: string | null;
-  type: string | null;
-}
-
 interface RawTokenHolderItem {
   address: RawAddressRef;
   token_id: string | null;
@@ -141,6 +131,64 @@ interface RawEthGetLogsLog {
   logIndex: Hex;
   removed: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// getTokenMetadata classification — pure RPC (eth_call), no Blockscout.
+// Confirmed live: Blockscout is now behind a Cloudflare managed challenge
+// (every /v2/* endpoint returns 403 "Just a moment..." to server-side
+// fetch, consistently across endpoints and across repeated probes a few
+// seconds apart — not intermittent). Token identity is on-chain anyway:
+// name/symbol/decimals/totalSupply via eth_call, ERC-721/1155 via ERC-165
+// supportsInterface. This is strictly more reliable than a third-party
+// indexer and removes it from getTokenMetadata's critical path entirely.
+// One field is lost with no RPC equivalent: holdersCount (an aggregate
+// only an indexer computes) is always null via this path.
+// ---------------------------------------------------------------------------
+
+const ERC20_ABI = [
+  {
+    type: "function",
+    name: "name",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "string" }],
+  },
+  {
+    type: "function",
+    name: "symbol",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "string" }],
+  },
+  {
+    type: "function",
+    name: "decimals",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "uint8" }],
+  },
+  {
+    type: "function",
+    name: "totalSupply",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "uint256" }],
+  },
+] as const;
+
+const ERC165_ABI = [
+  {
+    type: "function",
+    name: "supportsInterface",
+    stateMutability: "view",
+    inputs: [{ type: "bytes4" }],
+    outputs: [{ type: "bool" }],
+  },
+] as const;
+
+/** ERC-165 interface IDs — fixed by their respective standards, not chain-specific. */
+const ERC721_INTERFACE_ID = "0x80ac58cd" as const;
+const ERC1155_INTERFACE_ID = "0xd9b67a26" as const;
 
 function toChainLog(log: Log): ChainLog {
   if (log.blockNumber === null || log.transactionHash === null || log.logIndex === null) {
@@ -342,21 +390,80 @@ export class RobinhoodAdapter implements ChainAdapter {
     );
   }
 
-  async getTokenMetadata(address: Address): Promise<TokenMetadata | null> {
-    const result = await this.blockscout.get<RawTokenResponse>(`/v2/tokens/${address}`, {
-      okOn404: true,
-    });
-    if (result === null) return null;
+  /** Swallows a revert/failure into null — an optional or unimplemented function reverting is a normal, expected outcome here, not an adapter error. */
+  private async tryReadContract<T>(fn: () => Promise<T>): Promise<T | null> {
+    try {
+      return await fn();
+    } catch {
+      return null;
+    }
+  }
 
-    return {
-      address,
-      name: result.name,
-      symbol: result.symbol,
-      decimals: result.decimals !== null ? Number(result.decimals) : null,
-      totalSupply: result.total_supply !== null ? BigInt(result.total_supply) : null,
-      holdersCount: result.holders_count !== null ? Number(result.holders_count) : null,
-      type: result.type,
-    };
+  async getTokenMetadata(address: Address): Promise<TokenMetadata | null> {
+    const supportsErc721 = await this.tryReadContract(() =>
+      this.publicClient.readContract({
+        address,
+        abi: ERC165_ABI,
+        functionName: "supportsInterface",
+        args: [ERC721_INTERFACE_ID],
+      }),
+    );
+
+    const supportsErc1155 =
+      supportsErc721 === true
+        ? false
+        : await this.tryReadContract(() =>
+            this.publicClient.readContract({
+              address,
+              abi: ERC165_ABI,
+              functionName: "supportsInterface",
+              args: [ERC1155_INTERFACE_ID],
+            }),
+          );
+
+    if (supportsErc721 === true || supportsErc1155 === true) {
+      // name()/symbol() are optional per ERC-721/1155 but near-universal in
+      // practice; decimals/totalSupply have no meaning for either standard.
+      const [name, symbol] = await Promise.all([
+        this.tryReadContract(() =>
+          this.publicClient.readContract({ address, abi: ERC20_ABI, functionName: "name" }),
+        ),
+        this.tryReadContract(() =>
+          this.publicClient.readContract({ address, abi: ERC20_ABI, functionName: "symbol" }),
+        ),
+      ]);
+      return {
+        address,
+        name,
+        symbol,
+        decimals: null,
+        totalSupply: null,
+        holdersCount: null,
+        type: supportsErc721 ? "ERC-721" : "ERC-1155",
+      };
+    }
+
+    // Not ERC-165-discoverable as 721/1155 — try ERC-20. decimals() is the
+    // most distinctive, near-universally-implemented ERC-20 signal; if it
+    // reverts, this isn't a token this adapter can classify.
+    const decimals = await this.tryReadContract(() =>
+      this.publicClient.readContract({ address, abi: ERC20_ABI, functionName: "decimals" }),
+    );
+    if (decimals === null) return null;
+
+    const [name, symbol, totalSupply] = await Promise.all([
+      this.tryReadContract(() =>
+        this.publicClient.readContract({ address, abi: ERC20_ABI, functionName: "name" }),
+      ),
+      this.tryReadContract(() =>
+        this.publicClient.readContract({ address, abi: ERC20_ABI, functionName: "symbol" }),
+      ),
+      this.tryReadContract(() =>
+        this.publicClient.readContract({ address, abi: ERC20_ABI, functionName: "totalSupply" }),
+      ),
+    ]);
+
+    return { address, name, symbol, decimals, totalSupply, holdersCount: null, type: "ERC-20" };
   }
 
   async getTokenHolders(address: Address, params?: PageParams): Promise<PagedResult<TokenHolder>> {
