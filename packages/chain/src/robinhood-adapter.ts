@@ -37,6 +37,8 @@ import type {
 export interface RobinhoodAdapterOptions {
   rpcUrl: string;
   explorerApiUrl: string;
+  /** Human-facing explorer base URL, distinct from explorerApiUrl (the REST API base). Defaults to the known mainnet Blockscout UI. */
+  explorerUrl?: string;
   /** Default 1000 — mirrors POLL_BLOCK_CHUNK_SIZE in docs/spec/09-INFRASTRUCTURE-DECISION.md §9. */
   pollBlockChunkSize?: bigint;
   rpcRetryCount?: number;
@@ -190,6 +192,17 @@ const ERC165_ABI = [
 const ERC721_INTERFACE_ID = "0x80ac58cd" as const;
 const ERC1155_INTERFACE_ID = "0xd9b67a26" as const;
 
+/** OpenZeppelin's Ownable — de facto standard, not a real ERC. */
+const OWNABLE_ABI = [
+  {
+    type: "function",
+    name: "owner",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "address" }],
+  },
+] as const;
+
 function toChainLog(log: Log): ChainLog {
   if (log.blockNumber === null || log.transactionHash === null || log.logIndex === null) {
     throw new Error(`Received a pending log with a null blockNumber/transactionHash/logIndex`);
@@ -231,9 +244,11 @@ export class RobinhoodAdapter implements ChainAdapter {
   private readonly blockscout: BlockscoutClient;
   private readonly chunkSize: bigint;
   private readonly rpcUrl: string;
+  private readonly explorerUrl: string;
 
   constructor(options: RobinhoodAdapterOptions) {
     this.rpcUrl = options.rpcUrl;
+    this.explorerUrl = options.explorerUrl ?? "https://robinhoodchain.blockscout.com";
     this.chunkSize = options.pollBlockChunkSize ?? 1000n;
     this.publicClient =
       options.publicClient ??
@@ -260,6 +275,7 @@ export class RobinhoodAdapter implements ChainAdapter {
       name: robinhoodChain.name,
       nativeCurrencySymbol: robinhoodChain.nativeCurrency.symbol,
       rpcUrl: this.rpcUrl,
+      explorerUrl: this.explorerUrl,
     };
   }
 
@@ -325,6 +341,17 @@ export class RobinhoodAdapter implements ChainAdapter {
 
   async getAddressBalance(address: Address): Promise<bigint> {
     return this.publicClient.getBalance({ address });
+  }
+
+  async getStorageAt(address: Address, slot: Hex): Promise<Hex> {
+    const value = await this.publicClient.getStorageAt({ address, slot });
+    return value ?? (("0x" + "0".repeat(64)) as Hex);
+  }
+
+  async getContractOwner(address: Address): Promise<Address | null> {
+    return this.tryReadContract(() =>
+      this.publicClient.readContract({ address, abi: OWNABLE_ABI, functionName: "owner" }),
+    );
   }
 
   /**

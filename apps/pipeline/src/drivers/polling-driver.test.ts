@@ -17,6 +17,7 @@ const ZERO_SUMMARY: PipelineRunSummary = {
   tokenLaunchSignalsFound: 0,
   opportunitiesCreated: 0,
   opportunitiesDeduplicated: 0,
+  opportunitiesFailed: 0,
 };
 
 // Large enough that none of these tests' checkpoint/head gaps get clamped
@@ -184,6 +185,7 @@ describe("runPollingDriver logging", () => {
       tokenLaunchSignalsFound: 1,
       opportunitiesCreated: 1,
       opportunitiesDeduplicated: 1,
+      opportunitiesFailed: 0,
     } satisfies PipelineRunSummary);
     const prisma = makeFakePrisma();
     const chainAdapter = makeChainAdapter(100n);
@@ -211,6 +213,7 @@ describe("runPollingDriver logging", () => {
       tokenLaunchSignalsFound: 1,
       opportunitiesCreated: 1,
       opportunitiesDeduplicated: 1,
+      opportunitiesFailed: 0,
     });
     logSpy.mockRestore();
   });

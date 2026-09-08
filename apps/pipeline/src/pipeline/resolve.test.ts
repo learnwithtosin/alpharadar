@@ -23,6 +23,8 @@ function tokenIngestResultOf(signals: Erc20LaunchSignal[]): IngestResult {
 
 const SIGNAL: NftMintSignal = {
   contractAddress: "0xBeD6B57A5dB1aA23153A4C7740f21Fb76a7776F1" as Address,
+  deployerAddress: "0x02B41dcf9ed57CdFDFbd61b8836D419ea3D6E266" as Address,
+  deployedAtBlock: 56_940_450n,
   tokenName: "CookLauncherToken",
   tokenSymbol: "COOK",
   mintTransactionHash: "0x81ccca91862af49223df904766cb29e87405b656bc565a90af69e73790e83432" as Hex,
@@ -32,6 +34,8 @@ const SIGNAL: NftMintSignal = {
 
 const TOKEN_SIGNAL: Erc20LaunchSignal = {
   contractAddress: "0x9781e25ccc7259d8fbfdc377d14ad51a894111c5" as Address,
+  deployerAddress: "0x02B41dcf9ed57CdFDFbd61b8836D419ea3D6E266" as Address,
+  deployedAtBlock: 57_615_421n,
   tokenName: "SomeToken",
   tokenSymbol: "SMT",
   activityTransactionHash:
@@ -115,6 +119,7 @@ describe("resolve", () => {
     expect(result.deduplicatedCount).toBe(0);
     expect(prisma._rows.projects).toHaveLength(1);
     expect(prisma._rows.contracts).toHaveLength(1);
+    expect(prisma._rows.contracts[0]).toMatchObject({ deployerAddress: SIGNAL.deployerAddress });
     expect(prisma._rows.opportunities).toHaveLength(1);
     expect(prisma._rows.events).toHaveLength(1);
     expect(prisma._rows.events[0]).toMatchObject({ eventType: "DETECTED" });
@@ -191,7 +196,10 @@ describe("resolve — ERC-20 token launches", () => {
     expect(prisma._rows.projects).toHaveLength(1);
     expect(prisma._rows.projects[0]).toMatchObject({ projectType: "TOKEN" });
     expect(prisma._rows.contracts).toHaveLength(1);
-    expect(prisma._rows.contracts[0]).toMatchObject({ contractType: "ERC20" });
+    expect(prisma._rows.contracts[0]).toMatchObject({
+      contractType: "ERC20",
+      deployerAddress: TOKEN_SIGNAL.deployerAddress,
+    });
     expect(prisma._rows.opportunities[0]).toMatchObject({
       type: "TOKEN_LAUNCH",
       actionProfile: "TRADE_RESEARCH",

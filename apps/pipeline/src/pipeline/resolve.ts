@@ -64,6 +64,7 @@ async function findOrCreateContract(
       chain,
       address: signal.contractAddress,
       contractType: "ERC721",
+      deployerAddress: signal.deployerAddress,
     },
   });
 }
@@ -110,6 +111,7 @@ async function findOrCreateTokenContract(
       chain,
       address: signal.contractAddress,
       contractType: "ERC20",
+      deployerAddress: signal.deployerAddress,
     },
   });
 }

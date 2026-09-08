@@ -16,6 +16,7 @@ async function main(): Promise<void> {
   const chainAdapter = new RobinhoodAdapter({
     rpcUrl: env.ROBINHOOD_RPC_URL,
     explorerApiUrl: env.ROBINHOOD_EXPLORER_API_URL,
+    explorerUrl: env.ROBINHOOD_EXPLORER_URL,
     pollBlockChunkSize: BigInt(env.POLL_BLOCK_CHUNK_SIZE),
   });
 

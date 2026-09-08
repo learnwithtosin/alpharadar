@@ -1,5 +1,6 @@
 import type { ChainAdapter } from "@alpharadar/chain";
 import type { PrismaClient } from "@alpharadar/database";
+import { log } from "./logger.js";
 import { alert } from "./pipeline/alert.js";
 import { analyze } from "./pipeline/analyze.js";
 import { ingest } from "./pipeline/ingest.js";
@@ -21,6 +22,8 @@ export interface PipelineRunSummary {
   tokenLaunchSignalsFound: number;
   opportunitiesCreated: number;
   opportunitiesDeduplicated: number;
+  /** Opportunities whose verify/score/analyze/alert sequence threw and were skipped — see the per-opportunity try/catch below. */
+  opportunitiesFailed: number;
 }
 
 /**
@@ -54,11 +57,22 @@ export async function runPipeline(
 
   const resolveResult = await resolve(deps.prisma, ingestResult, { chain: deps.chain });
 
+  // One opportunity's verify/score/analyze/alert failing must not abort
+  // the rest of this batch or the run's checkpoint advance — the same
+  // principle ingest.ts applies per-candidate (constitution §8's
+  // UNKNOWN-not-fabricated stance implies degrading gracefully, not
+  // aborting, when a single downstream read fails).
+  let opportunitiesFailed = 0;
   for (const opportunityId of resolveResult.createdOpportunityIds) {
-    await verify(opportunityId);
-    await score(opportunityId);
-    await analyze(opportunityId);
-    await alert(opportunityId);
+    try {
+      await verify(opportunityId, deps.chainAdapter, deps.prisma);
+      await score(opportunityId, deps.prisma);
+      await analyze(opportunityId);
+      await alert(opportunityId);
+    } catch (error) {
+      opportunitiesFailed++;
+      log.error("runPipeline.opportunity.failed", error, { opportunityId });
+    }
   }
 
   return {
@@ -68,5 +82,6 @@ export async function runPipeline(
     tokenLaunchSignalsFound: ingestResult.tokenLaunchSignals.length,
     opportunitiesCreated: resolveResult.createdOpportunityIds.length,
     opportunitiesDeduplicated: resolveResult.deduplicatedCount,
+    opportunitiesFailed,
   };
 }

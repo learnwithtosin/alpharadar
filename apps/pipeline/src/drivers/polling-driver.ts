@@ -62,6 +62,7 @@ export async function runPollingDriver(deps: PollingDriverDeps): Promise<void> {
       tokenLaunchSignalsFound: summary.tokenLaunchSignalsFound,
       opportunitiesCreated: summary.opportunitiesCreated,
       opportunitiesDeduplicated: summary.opportunitiesDeduplicated,
+      opportunitiesFailed: summary.opportunitiesFailed,
     });
   } catch (error) {
     await recordRunFailure(

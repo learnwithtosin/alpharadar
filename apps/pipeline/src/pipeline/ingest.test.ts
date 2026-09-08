@@ -85,6 +85,8 @@ describe("ingest", () => {
     expect(result.nftMintSignals).toEqual([
       {
         contractAddress: CANDIDATE,
+        deployerAddress: creationOf(CANDIDATE).creatorAddress,
+        deployedAtBlock: creationOf(CANDIDATE).blockNumber,
         tokenName: "CookLauncherToken",
         tokenSymbol: "COOK",
         mintTransactionHash: REAL_MINT_LOG.transactionHash,
@@ -268,6 +270,8 @@ describe("ingest — ERC-20 token launch detection", () => {
     expect(result.tokenLaunchSignals).toEqual([
       {
         contractAddress: CANDIDATE,
+        deployerAddress: creationOf(CANDIDATE).creatorAddress,
+        deployedAtBlock: creationOf(CANDIDATE).blockNumber,
         tokenName: "SomeToken",
         tokenSymbol: "SMT",
         activityTransactionHash: REAL_MINT_LOG.transactionHash,

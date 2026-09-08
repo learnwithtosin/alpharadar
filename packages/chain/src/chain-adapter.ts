@@ -35,6 +35,25 @@ export interface ChainAdapter {
   getContractCode(address: Address): Promise<Hex>;
   getAddressBalance(address: Address): Promise<bigint>;
 
+  /**
+   * Raw storage-slot read (eth_getStorageAt). Used for on-chain risk
+   * signals that need a specific known slot (e.g. the EIP-1967 proxy
+   * implementation slot) rather than an ABI-decoded value — deliberately a
+   * thin passthrough, not an interpretation, matching getContractCode's
+   * "give the raw bytes, let the caller decide" shape.
+   */
+  getStorageAt(address: Address, slot: Hex): Promise<Hex>;
+
+  /**
+   * Reads Ownable's `owner()` (OpenZeppelin's de facto standard, not a
+   * real ERC). Returns null when the call reverts — no such function,
+   * which is a normal, expected outcome for a non-Ownable contract, not an
+   * error — rather than the zero address, so "not Ownable" and
+   * "ownership renounced to the zero address" (a real, meaningful, and
+   * different fact) are never confused.
+   */
+  getContractOwner(address: Address): Promise<Address | null>;
+
   /** Filtered by address/topics and chunked internally — never a bare full-range scan. */
   getLogs(params: GetLogsParams): Promise<ChainLog[]>;
 

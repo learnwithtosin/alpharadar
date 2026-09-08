@@ -1,7 +1,25 @@
-// Placeholder — not implemented yet.
-//
-// This package will hold deterministic scoring
-// (02-MVP-TECHNICAL-SPECIFICATION.md §12, 08-ENGINEERING-REVIEW §4.2).
-// Deliberately empty for this phase: "Implement the monorepo foundation and
-// the complete database schema... Do not implement any pipeline logic yet."
-export {};
+export {
+  assessContractRisk,
+  assessConcentrationRisk,
+  assessDeployerRisk,
+  combineOverallRisk,
+  isAlertVetoed,
+  type ContractRiskInput,
+  type ConcentrationRiskInput,
+  type DeployerRiskInput,
+  type RiskAssessmentResult,
+} from "./risk.js";
+
+export {
+  bytecodeContainsAnySelector,
+  MINT_FUNCTION_SELECTORS,
+  PAUSE_OR_BLACKLIST_FUNCTION_SELECTORS,
+} from "./bytecode-signals.js";
+
+export {
+  computeScore,
+  SCORING_VERSION,
+  type ScoreInputs,
+  type ScoreComponents,
+  type ScoreResult,
+} from "./score.js";

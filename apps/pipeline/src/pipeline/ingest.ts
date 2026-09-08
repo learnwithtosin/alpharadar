@@ -18,6 +18,9 @@ const ZERO_ADDRESS_TOPIC = ("0x" + "0".repeat(64)) as Hex;
 
 export interface NftMintSignal {
   contractAddress: Address;
+  /** The `from` of the contract-creation transaction — a FACT from the creation receipt, not an inference. */
+  deployerAddress: Address;
+  deployedAtBlock: bigint;
   tokenName: string | null;
   tokenSymbol: string | null;
   mintTransactionHash: Hex;
@@ -37,6 +40,9 @@ export interface NftMintSignal {
  */
 export interface Erc20LaunchSignal {
   contractAddress: Address;
+  /** The `from` of the contract-creation transaction — a FACT from the creation receipt, not an inference. */
+  deployerAddress: Address;
+  deployedAtBlock: bigint;
   tokenName: string | null;
   tokenSymbol: string | null;
   activityTransactionHash: Hex;
@@ -119,6 +125,7 @@ export async function ingest(
 
   const creations = await chainAdapter.getRecentContractCreations(params.fromBlock, params.toBlock);
   const candidateAddresses: Address[] = creations.map((creation) => creation.address);
+  const creationByAddress = new Map(creations.map((creation) => [creation.address, creation]));
 
   for (const address of candidateAddresses) {
     try {
@@ -126,6 +133,9 @@ export async function ingest(
         where: { chain_address: { chain: params.chain, address } },
       });
       if (known) continue;
+
+      // Always present — address came from this same creations array.
+      const creation = creationByAddress.get(address)!;
 
       const tokenMetadata = await chainAdapter.getTokenMetadata(address);
 
@@ -145,6 +155,8 @@ export async function ingest(
 
         nftMintSignals.push({
           contractAddress: address,
+          deployerAddress: creation.creatorAddress,
+          deployedAtBlock: creation.blockNumber,
           tokenName: tokenMetadata.name,
           tokenSymbol: tokenMetadata.symbol,
           mintTransactionHash: firstMint.transactionHash,
@@ -173,6 +185,8 @@ export async function ingest(
 
         tokenLaunchSignals.push({
           contractAddress: address,
+          deployerAddress: creation.creatorAddress,
+          deployedAtBlock: creation.blockNumber,
           tokenName: tokenMetadata.name,
           tokenSymbol: tokenMetadata.symbol,
           activityTransactionHash: firstActivity.transactionHash,

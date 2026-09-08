@@ -56,6 +56,7 @@ describe("RobinhoodAdapter — RPC-backed methods", () => {
       name: "Robinhood Chain",
       nativeCurrencySymbol: "ETH",
       rpcUrl: "https://rpc.mainnet.chain.robinhood.com",
+      explorerUrl: "https://robinhoodchain.blockscout.com",
     });
   });
 
@@ -435,6 +436,52 @@ describe("RobinhoodAdapter — getTokenMetadata (pure RPC classification, no Blo
     await adapter.getTokenMetadata(ADDRESS);
 
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+});
+
+describe("RobinhoodAdapter — getStorageAt / getContractOwner", () => {
+  it("getStorageAt passes address/slot through and returns the raw value", async () => {
+    const slot = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc" as Hex;
+    const value = "0x000000000000000000000000c6b81b429797e0f555440b70cd99e032d7ae947e" as Hex;
+    const getStorageAt = vi.fn().mockResolvedValue(value);
+    const adapter = makeAdapter({ publicClient: { getStorageAt } });
+
+    await expect(adapter.getStorageAt(ADDRESS, slot)).resolves.toBe(value);
+    expect(getStorageAt).toHaveBeenCalledWith({ address: ADDRESS, slot });
+  });
+
+  it("getStorageAt returns the zero slot, not null, when the node returns nothing", async () => {
+    const slot = "0x1" as Hex;
+    const getStorageAt = vi.fn().mockResolvedValue(undefined);
+    const adapter = makeAdapter({ publicClient: { getStorageAt } });
+
+    await expect(adapter.getStorageAt(ADDRESS, slot)).resolves.toBe(("0x" + "0".repeat(64)) as Hex);
+  });
+
+  it("getContractOwner returns the owner address when the contract is Ownable", async () => {
+    const OWNER = "0x02B41dcf9ed57CdFDFbd61b8836D419ea3D6E266" as Address;
+    const readContract = vi.fn().mockImplementation(async (args: { functionName: string }) => {
+      if (args.functionName === "owner") return OWNER;
+      throw new Error("unexpected");
+    });
+    const adapter = makeAdapter({ publicClient: { readContract } });
+
+    await expect(adapter.getContractOwner(ADDRESS)).resolves.toBe(OWNER);
+  });
+
+  it("getContractOwner returns null (not the zero address) when owner() reverts — not Ownable", async () => {
+    const readContract = vi.fn().mockRejectedValue(new Error("revert"));
+    const adapter = makeAdapter({ publicClient: { readContract } });
+
+    await expect(adapter.getContractOwner(ADDRESS)).resolves.toBeNull();
+  });
+
+  it("getContractOwner returns the zero address as a real value when ownership was renounced", async () => {
+    const ZERO = ("0x" + "0".repeat(40)) as Address;
+    const readContract = vi.fn().mockResolvedValue(ZERO);
+    const adapter = makeAdapter({ publicClient: { readContract } });
+
+    await expect(adapter.getContractOwner(ADDRESS)).resolves.toBe(ZERO);
   });
 });
 

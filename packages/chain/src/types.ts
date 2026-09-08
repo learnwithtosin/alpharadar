@@ -14,6 +14,8 @@ export interface ChainMetadata {
   name: string;
   nativeCurrencySymbol: string;
   rpcUrl: string;
+  /** Human-facing block explorer base URL (e.g. `https://robinhoodchain.blockscout.com`) — for building a real, dereferenceable Source.url, not the REST API base. */
+  explorerUrl: string;
 }
 
 export interface ChainBlock {
