@@ -54,23 +54,35 @@ const envSchema = z.object({
   // plus one eth_getTransactionReceipt call per contract-creation
   // candidate found (not per transaction) — batching was proven live not
   // to hold up under sustained load (see
-  // ChainAdapter.getRecentContractCreations). Originally sized against an
-  // eth_getBlockReceipts-per-block design: a real run measured 150 blocks
-  // in 58s (~2.59 blocks/sec end-to-end, including enrichment reads and DB
-  // writes — slower than the synthetic RPC-only probe's ~3.1/s). At that
-  // rate, ~4 minutes' budget is a ceiling of ~621 blocks; 600 leaves a
-  // small margin. See docs/decisions/0008-erc20-launch-detection.md. That
-  // method was later found to be disproportionately throttled on the
-  // authenticated endpoint (0.78 blocks/sec measured) and replaced with
-  // this one (2.83 blocks/sec measured on an identical range) — see
-  // docs/decisions/0010-rpc-timeout-and-throughput.md and
-  // docs/decisions/0011-discovery-method-switch.md. The new measured rate
-  // is close enough to the original ~2.6-3.1 blocks/sec this value was
-  // sized against that 600 was left unchanged. Cron cadence dropped to
-  // every 5 minutes accordingly (docs/spec/09-INFRASTRUCTURE-DECISION.md
-  // §8). A run scans only the most recent MAX_BLOCKS_PER_RUN blocks and
-  // does not backfill beyond that — see checkpoint.ts's getNextRange.
-  MAX_BLOCKS_PER_RUN: z.coerce.number().int().positive().default(600),
+  // ChainAdapter.getRecentContractCreations).
+  //
+  // Sized by budgeting the *whole* run (startup + scan + post-scan),
+  // not just the scan, after a 950-block run at total_time/blocks =
+  // 246ms/block overran the 300s cron (364s actual) — that figure folded
+  // post-scan (verify/score) cost into a per-block rate, which only looks
+  // right when candidate count is low; it silently breaks whenever a run
+  // finds more candidates. A later 950-block run reported its scan rate
+  // directly (305ms/block, from discovery.scan.complete) and its
+  // post-scan cost separately (70s for 10 candidates = 7s/candidate),
+  // decomposing 364s total as: startup 364s - (950*0.305s = 289.75s
+  // scan) - 70s post-scan = 4.25s, rounded up to 5s. Candidate count is
+  // bursty (2 vs. 10 across two real runs) so the post-scan term uses the
+  // higher observed count (10), not the average (6), as a pessimistic
+  // input. Targeting a 240s total (60s/20% margin under the 300s cron,
+  // on top of the pessimism already in the 10-candidate assumption):
+  //   5s + B*0.305s + 10*7s <= 240s  =>  B <= (240-5-70)/0.305 ~= 541
+  // Rounded down to 500 given two consecutive misses on this sizing —
+  // worst case at 500 blocks / 10 candidates: 5 + 500*0.305 + 70 = 227.5s
+  // (72.5s / 24% margin). A burst past 10 candidates could still overrun;
+  // that's bounded by the GitHub Actions concurrency guard (a slow run
+  // cancels the next scheduled one rather than racing the checkpoint),
+  // not eliminated by sizing. See
+  // docs/decisions/0011-discovery-method-switch.md. Cron cadence stays
+  // every 5 minutes (docs/spec/09-INFRASTRUCTURE-DECISION.md §8) — this
+  // changes how much of that fixed window is used per run, not how often
+  // it runs. A run scans only the most recent MAX_BLOCKS_PER_RUN blocks
+  // and does not backfill beyond that — see checkpoint.ts's getNextRange.
+  MAX_BLOCKS_PER_RUN: z.coerce.number().int().positive().default(500),
   ALERT_MIN_SCORE: z.coerce.number().int().min(0).max(100).default(60),
   ALERT_MAX_PER_USER_PER_HOUR: z.coerce.number().int().positive().default(6),
 

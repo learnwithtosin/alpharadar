@@ -97,6 +97,13 @@ or the discovery method/provider needs its own follow-up — left as an
 open decision for the user given this contradicts the working assumption
 the value was set under.
 
+**Follow-up**: the discovery method was the actual bottleneck, not the
+endpoint — see docs/decisions/0011-discovery-method-switch.md, which
+replaces `eth_getBlockReceipts` with `eth_getBlockByNumber` + selective
+`eth_getTransactionReceipt` and resizes `MAX_BLOCKS_PER_RUN` (950 first,
+then 500 after that first resize overran the cron — see 0011's full
+derivation and the GitHub Actions concurrency guard it adds).
+
 ## What does not change
 
 The checkpoint's accepted-gap semantics; the per-candidate resilience
