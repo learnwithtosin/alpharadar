@@ -68,7 +68,6 @@ describe("deriveNftMintAlertReasons", () => {
       isFree: true,
       contractRisk: "LOW",
       concentrationRisk: "UNKNOWN",
-      score: 78,
       ageMs: 10 * 60 * 60 * 1000,
     });
 
@@ -78,19 +77,19 @@ describe("deriveNftMintAlertReasons", () => {
     ]);
   });
 
-  it("falls back to score and detection-method facts when nothing else qualifies", () => {
+  it("falls back to detection-method facts when nothing else qualifies — never restates the Score line shown a few lines up", () => {
     const reasons = deriveNftMintAlertReasons({
       isFree: false,
       contractRisk: "UNKNOWN",
       concentrationRisk: "UNKNOWN",
-      score: 55,
       ageMs: 10 * 60 * 60 * 1000,
     });
 
     expect(reasons).toEqual([
-      "AlphaRadar score: 55/100",
       "Detected via on-chain contract-creation monitoring, not a third-party listing",
+      "Newly deployed contract — not a reopened or reused collection",
     ]);
+    expect(reasons.some((r) => /score/i.test(r))).toBe(false);
   });
 
   it("includes a recency reason when detected within the last hour", () => {
@@ -98,23 +97,22 @@ describe("deriveNftMintAlertReasons", () => {
       isFree: false,
       contractRisk: "UNKNOWN",
       concentrationRisk: "UNKNOWN",
-      score: 55,
       ageMs: 5 * 60 * 1000,
     });
 
     expect(reasons).toContain("Detected within the last hour — early signal");
   });
 
-  it("always returns exactly two reasons, never fabricated, never empty", () => {
+  it("always returns exactly two reasons, never fabricated, never empty, never a score restate", () => {
     const reasons = deriveNftMintAlertReasons({
       isFree: false,
       contractRisk: "HIGH",
       concentrationRisk: "HIGH",
-      score: 10,
       ageMs: 999_999_999,
     });
 
     expect(reasons).toHaveLength(2);
     expect(reasons.every((r) => typeof r === "string" && r.length > 0)).toBe(true);
+    expect(reasons.some((r) => /score/i.test(r))).toBe(false);
   });
 });

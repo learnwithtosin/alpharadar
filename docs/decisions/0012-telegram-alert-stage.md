@@ -193,6 +193,48 @@ outright connection timeouts even with that fix applied). Recorded here
 as an operating condition, not a bug to chase further: the retry budget
 above is sized around it.
 
+## NFT template has no contract address — that's the spec, not a bug
+
+A live alert for the seeded (NFT_MINT) test opportunity showed no
+contract address, which was flagged as a possible bug. Re-checked against
+03's literal template text directly (not from memory): the NFT template
+genuinely has no CA line at all — `Project`/`Chain`/`Mint`/`Status`/
+`Score`/`Risk`/`Urgency`/`Why it matters` only. The Token template does
+(`CA:` / `<full contract address>`), and `renderTokenAlertMessage`
+renders `contractAddress` verbatim with no truncation — already covered
+by an explicit "never shortens the contract address" test. Nothing
+changed here; this section exists so the confirmation is on the record,
+not just in the reply that gave it.
+
+## "Why it matters" no longer restates the Score line
+
+`deriveNftMintAlertReasons`' lowest-priority fallback used to be
+`AlphaRadar score: ${score}/100` — live testing showed this firing
+routinely (whenever none of isFree/LOW-contractRisk/LOW-concentration/
+recently-detected applied) sitting directly under a `Why it matters:`
+heading three lines below a `Score: 61/100` the message already shows.
+A bullet that repeats a fact the reader just read isn't a reason to pay
+attention, it's a wasted line in the one section whose whole job is
+supplying reasons. Removed, and `score` dropped from
+`NftMintAlertReasonInputs` entirely — it was only ever used to build that
+one line, so keeping it as a parameter after removing its only use would
+have left a misleading, dead field.
+
+Removing it without a replacement would have broken the "always exactly
+two, never fabricated" guarantee: the old always-true fallback was two
+candidates deep (score restate, then the detection-method line) — with
+the first one gone, an opportunity that fails every conditional check
+would fall to a single guaranteed candidate, one short. Added a genuine
+second structural fact instead of thinning the guarantee: "Newly
+deployed contract — not a reopened or reused collection" — always true
+of anything `getRecentContractCreations` finds (it only ever returns
+fresh deployments), and not shown anywhere else in the message, unlike
+the score line it replaces.
+
+The Token template has no "Why it matters" section at all in 03's
+literal text — no bullets, no equivalent function exists to have the
+same problem. Nothing to change there.
+
 ## ALERT_DEDUPE_WINDOW_HOURS — a judgment call, not derived
 
 08 §4.4 specifies a dedupe window without naming N hours. Defaulted to

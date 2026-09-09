@@ -74,7 +74,6 @@ function renderMessageText(
       isFree: isFreeOpportunity(opportunity),
       contractRisk: riskAssessment?.contractRisk ?? "UNKNOWN",
       concentrationRisk: riskAssessment?.concentrationRisk ?? "UNKNOWN",
-      score: opportunity.score as number,
       ageMs: Date.now() - opportunity.detectedAt.getTime(),
     });
     return renderNftMintAlertMessage({

@@ -40,7 +40,6 @@ export interface NftMintAlertReasonInputs {
   isFree: boolean;
   contractRisk: RiskLevel;
   concentrationRisk: RiskLevel;
-  score: number;
   /** Milliseconds since detection — drives the "detected recently" reason. */
   ageMs: number;
 }
@@ -49,10 +48,14 @@ const ONE_HOUR_MS = 60 * 60 * 1000;
 
 /**
  * Every candidate reason states a fact this pipeline actually computed —
- * 01 §8: never fabricate a reason to fill the template. Picks the two
- * highest-priority facts that are true; the last two candidates are always
- * true (a score always exists by the time alert() runs, and ageMs is
- * always >= 0), so this always has at least two to return.
+ * 01 §8: never fabricate a reason to fill the template — and none of them
+ * restate a fact the message already shows a few lines up (Score, Risk,
+ * Urgency): a bullet in "Why it matters" that just repeats the Score line
+ * is a wasted line in the one section meant to justify attention, not new
+ * information. Picks the two highest-priority facts that are true; the
+ * last two candidates are structural guarantees of how this pipeline
+ * works (always true, not conditional on this opportunity's own data), so
+ * this always has at least two to return.
  */
 export function deriveNftMintAlertReasons(input: NftMintAlertReasonInputs): [string, string] {
   const candidates: string[] = [];
@@ -69,8 +72,8 @@ export function deriveNftMintAlertReasons(input: NftMintAlertReasonInputs): [str
   if (input.ageMs < ONE_HOUR_MS) {
     candidates.push("Detected within the last hour — early signal");
   }
-  candidates.push(`AlphaRadar score: ${input.score}/100`);
   candidates.push("Detected via on-chain contract-creation monitoring, not a third-party listing");
+  candidates.push("Newly deployed contract — not a reopened or reused collection");
 
   return [candidates[0] as string, candidates[1] as string];
 }
