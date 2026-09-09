@@ -2,6 +2,7 @@ import { NotImplementedError, ROBINHOOD_CHAIN_SLUG, RobinhoodAdapter } from "@al
 import { getEnv } from "@alpharadar/config";
 import { prisma } from "@alpharadar/database";
 import { runPollingDriver } from "./drivers/polling-driver.js";
+import { log } from "./logger.js";
 
 /**
  * Entry point: `pnpm pipeline`. Selects a driver by RUN_MODE — the seam
@@ -18,6 +19,11 @@ async function main(): Promise<void> {
     explorerApiUrl: env.ROBINHOOD_EXPLORER_API_URL,
     explorerUrl: env.ROBINHOOD_EXPLORER_URL,
     pollBlockChunkSize: BigInt(env.POLL_BLOCK_CHUNK_SIZE),
+    // Same log stream as everything else in this process — the
+    // discovery-scan timing instrumentation (packages/chain) reads
+    // alongside pipeline.run.* lines, not as a separate, harder-to-find
+    // console stream.
+    logger: log,
   });
 
   if (env.RUN_MODE === "stream") {

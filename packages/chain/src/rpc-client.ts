@@ -1,4 +1,4 @@
-import { CloudflareChallengeError, RpcHttpError } from "./errors.js";
+import { CloudflareChallengeError, RpcHttpError, RpcTimeoutError } from "./errors.js";
 import { sleep, withRetry, type RetryOptions } from "./retry.js";
 
 export interface RpcClientOptions {
@@ -8,6 +8,16 @@ export interface RpcClientOptions {
   baseDelayMs?: number;
   maxDelayMs?: number;
   sleepImpl?: (ms: number) => Promise<void>;
+  /**
+   * Per-request timeout, aborting the fetch if exceeded. Default 10_000ms —
+   * matches viem's own `http()` transport default (confirmed from viem's
+   * source, not assumed). This adapter used to get that timeout for free
+   * from `http()`; switching to this custom transport for Cloudflare-
+   * challenge detection silently dropped it, which is exactly the kind of
+   * regression that turns "occasionally slow" into "hangs until something
+   * else times out" — see docs/decisions/0010-rpc-timeout-and-throughput.md.
+   */
+  timeoutMs?: number;
 }
 
 interface JsonRpcCall {
@@ -59,13 +69,21 @@ export function isCloudflareChallengeResponse(
  * reproduced on demand across 200 sequential eth_getBlockReceipts calls —
  * see docs/decisions/0009-rpc-cloudflare-challenge.md. Genuine JSON-RPC
  * errors (bad params, etc.) are never retried — only HTTP-level failures
- * (429/5xx) and challenges are.
+ * (429/5xx), timeouts, and challenges are.
+ *
+ * Every request is bounded by `timeoutMs` (default 10s, matching viem's
+ * own `http()` transport default) via AbortController — a request that
+ * exceeds it throws RpcTimeoutError, retried the same way. viem's `http()`
+ * transport enforced this automatically; this custom transport has to do
+ * it itself, and a production run measurably paid for the gap before it
+ * was added — see docs/decisions/0010-rpc-timeout-and-throughput.md.
  */
 export function createRpcProvider(options: RpcClientOptions): {
   request(call: JsonRpcCall): Promise<unknown>;
 } {
   const fetchImpl = options.fetchImpl ?? fetch;
   const sleepImpl = options.sleepImpl ?? sleep;
+  const timeoutMs = options.timeoutMs ?? 10_000;
   const retryOptions: RetryOptions = {
     maxAttempts: options.maxAttempts ?? 5,
     baseDelayMs: options.baseDelayMs ?? 1000,
@@ -76,11 +94,28 @@ export function createRpcProvider(options: RpcClientOptions): {
     async request({ method, params }: JsonRpcCall): Promise<unknown> {
       return withRetry(
         async () => {
-          const res = await fetchImpl(options.rpcUrl, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: params ?? [] }),
-          });
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), timeoutMs);
+          let res: Response;
+          try {
+            res = await fetchImpl(options.rpcUrl, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: params ?? [] }),
+              signal: controller.signal,
+            });
+          } catch (error) {
+            if (error instanceof Error && error.name === "AbortError") {
+              throw new RpcTimeoutError(
+                `RPC request (${method}) did not respond within ${timeoutMs}ms.`,
+                method,
+                timeoutMs,
+              );
+            }
+            throw error;
+          } finally {
+            clearTimeout(timer);
+          }
           const bodyText = await res.text();
 
           if (
@@ -118,6 +153,7 @@ export function createRpcProvider(options: RpcClientOptions): {
         retryOptions,
         (error) =>
           error instanceof CloudflareChallengeError ||
+          error instanceof RpcTimeoutError ||
           (error instanceof RpcHttpError && (error.status === 429 || error.status >= 500)),
         sleepImpl,
       );

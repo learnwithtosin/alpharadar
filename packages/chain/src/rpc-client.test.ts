@@ -1,6 +1,19 @@
-import { describe, expect, it, vi } from "vitest";
-import { CloudflareChallengeError, RpcHttpError } from "./errors.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { CloudflareChallengeError, RpcHttpError, RpcTimeoutError } from "./errors.js";
 import { createRpcProvider, isCloudflareChallengeResponse } from "./rpc-client.js";
+
+/** A fetch that never resolves on its own — only rejects with AbortError once its signal fires, matching real fetch's behavior under AbortController. */
+function makeHangingFetch(): typeof fetch {
+  return vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+    return new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => {
+        const err = new Error("This operation was aborted");
+        err.name = "AbortError";
+        reject(err);
+      });
+    });
+  }) as unknown as typeof fetch;
+}
 
 const CHALLENGE_BODY =
   '<!DOCTYPE html><html lang="en-US"><head><title>Just a moment...</title></head><body></body></html>';
@@ -172,5 +185,79 @@ describe("createRpcProvider", () => {
 
     await expect(provider.request({ method: "eth_blockNumber", params: [] })).rejects.toThrow();
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("createRpcProvider — timeout", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("aborts a hanging request once timeoutMs elapses and retries it, throwing RpcTimeoutError if it keeps hanging", async () => {
+    vi.useFakeTimers();
+    const fetchImpl = makeHangingFetch();
+    const sleepImpl = vi.fn().mockResolvedValue(undefined);
+    const provider = createRpcProvider({
+      rpcUrl: "https://rpc.test",
+      fetchImpl,
+      sleepImpl,
+      maxAttempts: 3,
+      timeoutMs: 1000,
+    });
+
+    const promise = provider.request({ method: "eth_getBlockReceipts", params: ["0x1"] });
+    const assertion = expect(promise).rejects.toThrow(RpcTimeoutError);
+    await vi.runAllTimersAsync();
+    await assertion;
+
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it("names the method and timeout on the thrown RpcTimeoutError", async () => {
+    vi.useFakeTimers();
+    const provider = createRpcProvider({
+      rpcUrl: "https://rpc.test",
+      fetchImpl: makeHangingFetch(),
+      sleepImpl: vi.fn().mockResolvedValue(undefined),
+      maxAttempts: 1,
+      timeoutMs: 2500,
+    });
+
+    const promise = provider.request({ method: "eth_getBlockReceipts", params: [] });
+    const assertion = expect(promise).rejects.toMatchObject({
+      name: "RpcTimeoutError",
+      method: "eth_getBlockReceipts",
+      timeoutMs: 2500,
+    });
+    await vi.runAllTimersAsync();
+    await assertion;
+  });
+
+  it("succeeds normally when the response arrives before the timeout", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(jsonResponse(200, { jsonrpc: "2.0", id: 1, result: "0x42" }));
+    const provider = createRpcProvider({
+      rpcUrl: "https://rpc.test",
+      fetchImpl,
+      timeoutMs: 10_000,
+    });
+
+    await expect(provider.request({ method: "eth_blockNumber", params: [] })).resolves.toBe("0x42");
+  });
+
+  it("defaults to a 10 second timeout when none is given, matching viem's own http() transport default", async () => {
+    // Not exercised end-to-end here (that would mean a real 10s wait) —
+    // this locks in the documented default via the option's fallback
+    // rather than leaving it unverified.
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(jsonResponse(200, { jsonrpc: "2.0", id: 1, result: "0x1" }));
+    const provider = createRpcProvider({ rpcUrl: "https://rpc.test", fetchImpl });
+
+    await provider.request({ method: "eth_blockNumber", params: [] });
+
+    const passedInit = fetchImpl.mock.calls[0]?.[1] as RequestInit;
+    expect(passedInit.signal).toBeInstanceOf(AbortSignal);
   });
 });

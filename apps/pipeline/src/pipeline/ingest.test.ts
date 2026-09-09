@@ -1,5 +1,6 @@
 import type { ChainAdapter, ChainLog, ContractCreation, TokenMetadata } from "@alpharadar/chain";
-import { describe, expect, it, vi } from "vitest";
+import { Prisma } from "@alpharadar/database";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Address, Hex } from "viem";
 import { ingest } from "./ingest.js";
 
@@ -398,5 +399,77 @@ describe("ingest — per-candidate resilience", () => {
     await expect(ingest(chainAdapter, prisma as never, PARAMS)).rejects.toThrow(
       "RPC endpoint unreachable",
     );
+  });
+});
+
+describe("ingest — DB retry on the per-candidate Contract lookup", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function connectionError(): Prisma.PrismaClientInitializationError {
+    return new Prisma.PrismaClientInitializationError(
+      "Can't reach database server at `aws-0-eu-central-1.pooler.supabase.com`:`6543`",
+      "6.19.3",
+      "P1001",
+    );
+  }
+
+  it("retries a connection-level failure on contract.findUnique and still completes the candidate", async () => {
+    vi.useFakeTimers();
+    const chainAdapter = makeChainAdapter({
+      candidates: [creationOf(CANDIDATE)],
+      tokenMetadata: {
+        address: CANDIDATE,
+        name: "CookLauncherToken",
+        symbol: "COOK",
+        decimals: null,
+        totalSupply: null,
+        holdersCount: null,
+        type: "ERC-721",
+      },
+      logs: [REAL_MINT_LOG],
+      txValue: 0n,
+    });
+    const findUnique = vi.fn().mockRejectedValueOnce(connectionError()).mockResolvedValueOnce(null);
+    const prisma = { contract: { findUnique } };
+
+    const promise = ingest(chainAdapter, prisma as never, PARAMS);
+    await vi.runAllTimersAsync();
+    const result = await promise;
+
+    expect(findUnique).toHaveBeenCalledTimes(2);
+    expect(result.candidatesFailed).toBe(0);
+    expect(result.nftMintSignals).toHaveLength(1);
+  });
+
+  it("degrades the candidate to failed (not an unhandled rejection) once retries are exhausted", async () => {
+    vi.useFakeTimers();
+    const chainAdapter = makeChainAdapter({ candidates: [creationOf(CANDIDATE)] });
+    const findUnique = vi.fn().mockRejectedValue(connectionError());
+    const prisma = { contract: { findUnique } };
+
+    const promise = ingest(chainAdapter, prisma as never, PARAMS);
+    await vi.runAllTimersAsync();
+    const result = await promise;
+
+    expect(result.candidatesFailed).toBe(1);
+    expect(result.nftMintSignals).toHaveLength(0);
+    expect(result.tokenLaunchSignals).toHaveLength(0);
+  });
+
+  it("does not retry a real query error on contract.findUnique — only connection-level failures", async () => {
+    const chainAdapter = makeChainAdapter({ candidates: [creationOf(CANDIDATE)] });
+    const queryError = new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+      code: "P2002",
+      clientVersion: "6.19.3",
+    });
+    const findUnique = vi.fn().mockRejectedValue(queryError);
+    const prisma = { contract: { findUnique } };
+
+    const result = await ingest(chainAdapter, prisma as never, PARAMS);
+
+    expect(findUnique).toHaveBeenCalledTimes(1);
+    expect(result.candidatesFailed).toBe(1);
   });
 });

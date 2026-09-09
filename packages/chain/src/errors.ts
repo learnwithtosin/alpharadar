@@ -68,3 +68,22 @@ export class RpcHttpError extends Error {
     this.status = status;
   }
 }
+
+/**
+ * A single RPC call exceeded its timeout with no response at all —
+ * distinct from RpcHttpError (which got a real, if bad, HTTP response).
+ * Retried the same way: transient, not a reason to abort the whole
+ * discovery scan over one slow round-trip. See
+ * docs/decisions/0010-rpc-timeout-and-throughput.md.
+ */
+export class RpcTimeoutError extends Error {
+  readonly method: string;
+  readonly timeoutMs: number;
+
+  constructor(message: string, method: string, timeoutMs: number) {
+    super(message);
+    this.name = "RpcTimeoutError";
+    this.method = method;
+    this.timeoutMs = timeoutMs;
+  }
+}

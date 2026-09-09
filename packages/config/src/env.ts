@@ -50,15 +50,24 @@ const envSchema = z.object({
 
   // Pipeline controls
   POLL_BLOCK_CHUNK_SIZE: z.coerce.number().int().positive().default(1000),
-  // Discovery scans one block per unbatched eth_getBlockReceipts RPC call —
-  // batching this call was proven live not to hold up under sustained load
-  // (see ChainAdapter.getRecentContractCreations). A real run measured
-  // 150 blocks in 58s (~2.59 blocks/sec end-to-end, including enrichment
-  // reads and DB writes — slower than the synthetic RPC-only probe's
-  // ~3.1/s). At that rate, ~4 minutes' budget is a ceiling of ~621
-  // blocks; 600 leaves a small margin. See
-  // docs/decisions/0008-erc20-launch-detection.md. Cron cadence dropped
-  // to every 5 minutes accordingly (docs/spec/09-INFRASTRUCTURE-DECISION.md
+  // Discovery scans one block per unbatched eth_getBlockByNumber RPC call,
+  // plus one eth_getTransactionReceipt call per contract-creation
+  // candidate found (not per transaction) — batching was proven live not
+  // to hold up under sustained load (see
+  // ChainAdapter.getRecentContractCreations). Originally sized against an
+  // eth_getBlockReceipts-per-block design: a real run measured 150 blocks
+  // in 58s (~2.59 blocks/sec end-to-end, including enrichment reads and DB
+  // writes — slower than the synthetic RPC-only probe's ~3.1/s). At that
+  // rate, ~4 minutes' budget is a ceiling of ~621 blocks; 600 leaves a
+  // small margin. See docs/decisions/0008-erc20-launch-detection.md. That
+  // method was later found to be disproportionately throttled on the
+  // authenticated endpoint (0.78 blocks/sec measured) and replaced with
+  // this one (2.83 blocks/sec measured on an identical range) — see
+  // docs/decisions/0010-rpc-timeout-and-throughput.md and
+  // docs/decisions/0011-discovery-method-switch.md. The new measured rate
+  // is close enough to the original ~2.6-3.1 blocks/sec this value was
+  // sized against that 600 was left unchanged. Cron cadence dropped to
+  // every 5 minutes accordingly (docs/spec/09-INFRASTRUCTURE-DECISION.md
   // §8). A run scans only the most recent MAX_BLOCKS_PER_RUN blocks and
   // does not backfill beyond that — see checkpoint.ts's getNextRange.
   MAX_BLOCKS_PER_RUN: z.coerce.number().int().positive().default(600),

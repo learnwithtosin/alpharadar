@@ -9,6 +9,7 @@ import {
 import { describe, expect, it, vi } from "vitest";
 import { BlockscoutClient } from "./blockscout-client.js";
 import { NotImplementedError } from "./errors.js";
+import type { AdapterLogger } from "./logger.js";
 import { RobinhoodAdapter } from "./robinhood-adapter.js";
 
 const ADDRESS = "0x492641F648a4986844848E0beFE66D14817bCE34" as Address;
@@ -26,6 +27,7 @@ function jsonResponse(status: number, body: unknown): Response {
 function makeAdapter(overrides: {
   publicClient?: Partial<PublicClient>;
   fetchImpl?: typeof fetch;
+  logger?: AdapterLogger;
 }) {
   const blockscoutClient = new BlockscoutClient({
     baseUrl: "https://robinhoodchain.blockscout.com/api",
@@ -38,6 +40,7 @@ function makeAdapter(overrides: {
     explorerApiUrl: "https://robinhoodchain.blockscout.com/api",
     publicClient: (overrides.publicClient ?? {}) as PublicClient,
     blockscoutClient,
+    logger: overrides.logger,
   });
 }
 
@@ -235,30 +238,37 @@ describe("RobinhoodAdapter — RPC-backed methods", () => {
     await expect(adapter.subscribeToBlocks(() => {})).rejects.toThrow(NotImplementedError);
   });
 
-  it("getRecentContractCreations calls eth_getBlockReceipts once per block, sequentially, never batched", async () => {
-    const calls: string[] = [];
-    const request = vi.fn().mockImplementation(async (args: { params: [string] }) => {
-      calls.push(args.params[0]);
-      return [];
-    });
+  it("getRecentContractCreations calls eth_getBlockByNumber once per block, sequentially, never batched, and skips eth_getTransactionReceipt when a block has no creation candidates", async () => {
+    const calls: { method: string; params: unknown[] }[] = [];
+    const request = vi
+      .fn()
+      .mockImplementation(async (args: { method: string; params: unknown[] }) => {
+        calls.push(args);
+        return { transactions: [] };
+      });
     const adapter = makeAdapter({ publicClient: { request } });
 
     await adapter.getRecentContractCreations(100n, 103n);
 
-    expect(request.mock.calls.every(([args]) => args.method === "eth_getBlockReceipts")).toBe(true);
-    expect(calls).toEqual(["0x64", "0x65", "0x66", "0x67"]);
+    expect(calls.every((c) => c.method === "eth_getBlockByNumber")).toBe(true);
+    expect(calls.map((c) => c.params[0])).toEqual(["0x64", "0x65", "0x66", "0x67"]);
+    expect(calls.every((c) => c.params[1] === true)).toBe(true);
   });
 
   it("getRecentContractCreations finds a creation via a non-null contractAddress and status success, checksums addresses", async () => {
-    const request = vi.fn().mockResolvedValue([
-      {
+    const CREATION_TX_HASH = "0x279ea8bc44cd0ee8fc46192de0ae202c81f76c3982197add315d8690acda239d";
+    const request = vi.fn().mockImplementation(async (args: { method: string }) => {
+      if (args.method === "eth_getBlockByNumber") {
+        return { transactions: [{ hash: CREATION_TX_HASH, to: null }] };
+      }
+      return {
         contractAddress: "0xbc12319ac2b452c8f23fd9d009214b2f46fb9263",
         status: "0x1",
-        transactionHash: "0x279ea8bc44cd0ee8fc46192de0ae202c81f76c3982197add315d8690acda239d",
+        transactionHash: CREATION_TX_HASH,
         blockNumber: "0x36fc2de",
         from: "0x02b41dcf9ed57cdfdfbd61b8836d419ea3d6e266",
-      },
-    ]);
+      };
+    });
     const adapter = makeAdapter({ publicClient: { request } });
 
     const creations = await adapter.getRecentContractCreations(57656030n, 57656030n);
@@ -267,22 +277,28 @@ describe("RobinhoodAdapter — RPC-backed methods", () => {
       {
         address: "0xBC12319AC2b452c8f23Fd9D009214B2F46fb9263",
         creatorAddress: "0x02B41dcf9ed57CdFDFbd61b8836D419ea3D6E266",
-        transactionHash: "0x279ea8bc44cd0ee8fc46192de0ae202c81f76c3982197add315d8690acda239d",
+        transactionHash: CREATION_TX_HASH,
         blockNumber: 57656030n,
       },
     ]);
+    expect(request).toHaveBeenCalledWith(
+      expect.objectContaining({ method: "eth_getTransactionReceipt", params: [CREATION_TX_HASH] }),
+    );
   });
 
   it("getRecentContractCreations excludes a failed creation attempt (status != 0x1)", async () => {
-    const request = vi.fn().mockResolvedValue([
-      {
+    const request = vi.fn().mockImplementation(async (args: { method: string }) => {
+      if (args.method === "eth_getBlockByNumber") {
+        return { transactions: [{ hash: "0xtx", to: null }] };
+      }
+      return {
         contractAddress: "0xbc12319ac2b452c8f23fd9d009214b2f46fb9263",
         status: "0x0",
         transactionHash: "0xtx",
         blockNumber: "0x1",
         from: "0x02b41dcf9ed57cdfdfbd61b8836d419ea3d6e266",
-      },
-    ]);
+      };
+    });
     const adapter = makeAdapter({ publicClient: { request } });
 
     const creations = await adapter.getRecentContractCreations(1n, 1n);
@@ -290,21 +306,101 @@ describe("RobinhoodAdapter — RPC-backed methods", () => {
     expect(creations).toEqual([]);
   });
 
-  it("getRecentContractCreations excludes ordinary (non-creation) receipts", async () => {
-    const request = vi.fn().mockResolvedValue([
-      {
-        contractAddress: null,
-        status: "0x1",
-        transactionHash: "0xtx",
-        blockNumber: "0x1",
-        from: "0x02b41dcf9ed57cdfdfbd61b8836d419ea3d6e266",
-      },
-    ]);
+  it("getRecentContractCreations never fetches a receipt for a transaction with to !== null", async () => {
+    const request = vi.fn().mockImplementation(async (args: { method: string }) => {
+      if (args.method === "eth_getBlockByNumber") {
+        return {
+          transactions: [{ hash: "0xtx", to: "0x492641f648a4986844848e0befe66d14817bce34" }],
+        };
+      }
+      throw new Error(`unexpected call: ${args.method}`);
+    });
     const adapter = makeAdapter({ publicClient: { request } });
 
     const creations = await adapter.getRecentContractCreations(1n, 1n);
 
     expect(creations).toEqual([]);
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("RobinhoodAdapter — discovery-scan timing instrumentation", () => {
+  function makeLogger(): AdapterLogger {
+    return { info: vi.fn(), warn: vi.fn() };
+  }
+
+  it("logs a start and complete event around the scan", async () => {
+    const request = vi.fn().mockResolvedValue({ transactions: [] });
+    const logger = makeLogger();
+    const adapter = makeAdapter({ publicClient: { request }, logger });
+
+    await adapter.getRecentContractCreations(100n, 102n);
+
+    expect(logger.info).toHaveBeenCalledWith(
+      "discovery.scan.start",
+      expect.objectContaining({ fromBlock: 100n, toBlock: 102n, blockCount: 3 }),
+    );
+    expect(logger.info).toHaveBeenCalledWith(
+      "discovery.scan.complete",
+      expect.objectContaining({ blocksScanned: 3, slowCallCount: 0, creationsFound: 0 }),
+    );
+  });
+
+  it("logs a slow_call warning when an individual call exceeds the threshold, and counts it in the summary", async () => {
+    vi.useFakeTimers();
+    try {
+      const request = vi.fn().mockImplementation(async () => {
+        vi.advanceTimersByTime(6000); // exceeds the 5s slow-call threshold
+        return { transactions: [] };
+      });
+      const logger = makeLogger();
+      const adapter = makeAdapter({ publicClient: { request }, logger });
+
+      await adapter.getRecentContractCreations(1n, 1n);
+
+      expect(logger.warn).toHaveBeenCalledWith(
+        "discovery.scan.slow_call",
+        expect.objectContaining({ blockNumber: 1n, elapsedMs: expect.any(Number) }),
+      );
+      expect(logger.info).toHaveBeenCalledWith(
+        "discovery.scan.complete",
+        expect.objectContaining({ slowCallCount: 1 }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not warn for calls under the threshold", async () => {
+    const request = vi.fn().mockResolvedValue({ transactions: [] });
+    const logger = makeLogger();
+    const adapter = makeAdapter({ publicClient: { request }, logger });
+
+    await adapter.getRecentContractCreations(1n, 1n);
+
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("logs a progress line every 50 blocks, not once per block", async () => {
+    const request = vi.fn().mockResolvedValue({ transactions: [] });
+    const logger = makeLogger();
+    const adapter = makeAdapter({ publicClient: { request }, logger });
+
+    await adapter.getRecentContractCreations(1n, 120n); // 120 blocks -> progress at 50, 100
+
+    const progressCalls = (logger.info as ReturnType<typeof vi.fn>).mock.calls.filter(
+      ([event]) => event === "discovery.scan.progress",
+    );
+    expect(progressCalls).toHaveLength(2);
+    expect(progressCalls[0]?.[1]).toMatchObject({ blocksScanned: 50, totalBlocks: 120 });
+    expect(progressCalls[1]?.[1]).toMatchObject({ blocksScanned: 100, totalBlocks: 120 });
+  });
+
+  it("works with the default console logger when none is injected — does not throw", async () => {
+    const request = vi.fn().mockResolvedValue({ transactions: [] });
+    const adapter = makeAdapter({ publicClient: { request } });
+
+    await expect(adapter.getRecentContractCreations(1n, 1n)).resolves.toEqual([]);
   });
 });
 

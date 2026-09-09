@@ -91,24 +91,37 @@ export interface ChainAdapter {
    * New-contract discovery, in chain order, including unverified
    * deployments — replaces getRecentlyVerifiedContracts as the discovery
    * source. Scans every block in [fromBlock, toBlock] via one
-   * eth_getBlockReceipts call per block and returns every successful
-   * contract creation found (receipt.contractAddress !== null, status
-   * success).
+   * eth_getBlockByNumber call per block, plus one eth_getTransactionReceipt
+   * call per contract-creation candidate found in that block (a
+   * transaction with `to === null`) — not for every transaction. Returns
+   * every successful contract creation found (receipt.contractAddress !==
+   * null, status success).
+   *
+   * Historical note — an earlier design used one eth_getBlockReceipts call
+   * per block instead. That method returns every receipt in the block
+   * (all logs included) and, on Alchemy, is priced at 500 throughput CU
+   * versus 20 for eth_getBlockByNumber and 20 for
+   * eth_getTransactionReceipt — a 25x difference that shows up directly as
+   * throttling. Measured live on the authenticated endpoint over an
+   * identical 600-block range: eth_getBlockReceipts ran at 0.78 blocks/sec
+   * with 18 of 600 calls taking 7-29s each; eth_getBlockByNumber +
+   * selective eth_getTransactionReceipt ran the same range at 2.83
+   * blocks/sec with zero calls over 5s, finding the same 3 contract
+   * creations. See docs/decisions/0011-discovery-method-switch.md.
    *
    * Deliberately one block per RPC call, not batched. Confirmed live
-   * against this chain's public RPC: a single isolated JSON-RPC batch of
-   * up to 29 eth_getBlockReceipts requests in one HTTP call succeeds
-   * (30 fails immediately, consistently — a hard batch-size or
-   * burst-budget ceiling). But *sustained* batching does not hold up: two
-   * batches of 29 fired back-to-back, and repeated batches of only 5,
-   * both exhausted the underlying rate budget within one or two calls and
-   * triggered a lockout that did not clear within 60s of continued
-   * (paced) retries. The only approach proven safe under sustained load is
-   * plain sequential, unbatched calls at natural network pace — measured
-   * twice, cleanly, zero errors: 300 calls/105s and 191 calls/60s
-   * (~3.1-3.2 blocks/sec). Callers must size fromBlock/toBlock accordingly
-   * (see checkpoint.ts's getNextRange for the accepted per-run block
-   * window) rather than assume this can be sped up with batching.
+   * against this chain's public RPC (original eth_getBlockReceipts
+   * design): a single isolated JSON-RPC batch of up to 29 requests in one
+   * HTTP call succeeds (30 fails immediately, consistently — a hard
+   * batch-size or burst-budget ceiling). But *sustained* batching does not
+   * hold up: two batches of 29 fired back-to-back, and repeated batches of
+   * only 5, both exhausted the underlying rate budget within one or two
+   * calls and triggered a lockout that did not clear within 60s of
+   * continued (paced) retries. The only approach proven safe under
+   * sustained load is plain sequential, unbatched calls at natural network
+   * pace. Callers must size fromBlock/toBlock accordingly (see
+   * checkpoint.ts's getNextRange for the accepted per-run block window)
+   * rather than assume this can be sped up with batching.
    */
   getRecentContractCreations(fromBlock: bigint, toBlock: bigint): Promise<ContractCreation[]>;
 }

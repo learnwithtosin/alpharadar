@@ -16,6 +16,7 @@ import { BlockscoutClient, type BlockscoutClientOptions } from "./blockscout-cli
 import type { ChainAdapter } from "./chain-adapter.js";
 import { chunkBlockRange } from "./chunk-block-range.js";
 import { NotImplementedError } from "./errors.js";
+import { defaultAdapterLogger, type AdapterLogger } from "./logger.js";
 import { ROBINHOOD_CHAIN_ID, robinhoodChain } from "./robinhood-chain-definition.js";
 import { createRpcProvider } from "./rpc-client.js";
 import type {
@@ -44,6 +45,10 @@ export interface RobinhoodAdapterOptions {
   pollBlockChunkSize?: bigint;
   /** Max attempts for a single RPC call before giving up — covers both a Cloudflare challenge and a plain 429/5xx. Default 5. See rpc-client.ts. */
   rpcRetryCount?: number;
+  /** Per-RPC-request timeout in ms before it's treated as failed and retried. Default 10_000 — see rpc-client.ts. */
+  rpcTimeoutMs?: number;
+  /** Structured-logging sink for adapter-level instrumentation (currently: discovery-scan timing). Defaults to a same-shaped console logger — see logger.ts. */
+  logger?: AdapterLogger;
   blockscoutOptions?: Partial<Omit<BlockscoutClientOptions, "baseUrl">>;
   /** Test-only: inject a viem client instead of creating one from rpcUrl. */
   publicClient?: PublicClient;
@@ -109,11 +114,23 @@ interface RawSmartContractListResponse {
 }
 
 /**
- * The unformatted shape a raw `eth_getBlockReceipts` JSON-RPC response
- * actually has — same hex-string-for-every-quantity convention as
- * eth_getLogs (see RawEthGetLogsLog above). Confirmed live.
+ * The unformatted shapes `eth_getBlockByNumber`/`eth_getTransactionReceipt`
+ * JSON-RPC responses actually have — same hex-string-for-every-quantity
+ * convention as eth_getLogs (see RawEthGetLogsLog below). Confirmed live.
+ * See docs/decisions/0011-discovery-method-switch.md for why discovery
+ * uses these two methods instead of eth_getBlockReceipts.
  */
-interface RawBlockReceiptItem {
+interface RawBlockTransaction {
+  hash: Hex;
+  /** null for a contract-creation transaction — the signal this scan filters on. */
+  to: string | null;
+}
+
+interface RawBlockWithTransactions {
+  transactions: RawBlockTransaction[];
+}
+
+interface RawTransactionReceipt {
   contractAddress: string | null;
   status: Hex;
   transactionHash: Hex;
@@ -194,6 +211,18 @@ const ERC165_ABI = [
 const ERC721_INTERFACE_ID = "0x80ac58cd" as const;
 const ERC1155_INTERFACE_ID = "0xd9b67a26" as const;
 
+/**
+ * Discovery-scan instrumentation thresholds (getRecentContractCreations).
+ * Normal eth_getBlockByNumber calls run ~350-550ms (measured live,
+ * repeatedly — see docs/decisions/0011-discovery-method-switch.md); 5s is
+ * well above that variance but well below the 10s request timeout, so a
+ * slow-call warning fires before a call would time out, not only after.
+ * 50-block progress lines keep a long scan diagnosable without producing
+ * one line per block.
+ */
+const DISCOVERY_SLOW_CALL_THRESHOLD_MS = 5000;
+const DISCOVERY_PROGRESS_LOG_INTERVAL = 50;
+
 /** OpenZeppelin's Ownable — de facto standard, not a real ERC. */
 const OWNABLE_ABI = [
   {
@@ -247,11 +276,13 @@ export class RobinhoodAdapter implements ChainAdapter {
   private readonly chunkSize: bigint;
   private readonly rpcUrl: string;
   private readonly explorerUrl: string;
+  private readonly logger: AdapterLogger;
 
   constructor(options: RobinhoodAdapterOptions) {
     this.rpcUrl = options.rpcUrl;
     this.explorerUrl = options.explorerUrl ?? "https://robinhoodchain.blockscout.com";
     this.chunkSize = options.pollBlockChunkSize ?? 1000n;
+    this.logger = options.logger ?? defaultAdapterLogger;
     this.publicClient =
       options.publicClient ??
       createPublicClient({
@@ -266,7 +297,11 @@ export class RobinhoodAdapter implements ChainAdapter {
         // page apart from a normal response, so it would either fail
         // opaquely or (worse) try to parse HTML as JSON-RPC.
         transport: custom(
-          createRpcProvider({ rpcUrl: options.rpcUrl, maxAttempts: options.rpcRetryCount ?? 5 }),
+          createRpcProvider({
+            rpcUrl: options.rpcUrl,
+            maxAttempts: options.rpcRetryCount ?? 5,
+            timeoutMs: options.rpcTimeoutMs,
+          }),
         ),
       });
     this.blockscout =
@@ -600,30 +635,87 @@ export class RobinhoodAdapter implements ChainAdapter {
   }
 
   /**
-   * One eth_getBlockReceipts call per block, sequential, never batched —
-   * see the doc comment on ChainAdapter.getRecentContractCreations for the
-   * live batching investigation this is based on. A creation is any
-   * receipt with a non-null contractAddress and status "0x1" (success); a
-   * failed creation attempt still consumes gas but produces no live
-   * contract and is excluded.
+   * One eth_getBlockByNumber(block, true) call per block, sequential,
+   * never batched, plus one eth_getTransactionReceipt call per
+   * contract-creation candidate (a tx with `to === null`) found in that
+   * block — not for every transaction. Replaces an earlier one-
+   * eth_getBlockReceipts-per-block design: measured live on the
+   * authenticated endpoint over an identical 600-block range,
+   * eth_getBlockReceipts ran at 0.78 blocks/sec (18 of 600 calls took
+   * 7-29s each) versus this approach's 2.83 blocks/sec with zero calls
+   * over 5s — both found the same 3 contract creations. Alchemy's
+   * published compute-unit costs explain why: eth_getBlockReceipts costs
+   * 500 throughput CU versus 20 for eth_getBlockByNumber and 20 for
+   * eth_getTransactionReceipt, so it hits per-second rate limits far
+   * harder per call. See docs/decisions/0011-discovery-method-switch.md.
+   * A creation is any receipt with a non-null contractAddress and status
+   * "0x1" (success); a failed creation attempt still consumes gas but
+   * produces no live contract and is excluded.
+   */
+  /**
+   * Timing instrumentation exists specifically so a slow run is diagnosable
+   * from the log alone — see docs/decisions/0010-rpc-timeout-and-throughput.md.
+   * A 22-minute production run against a 600-block/~4-minute-budget window
+   * had no way to show *where* the time went; this does.
    */
   async getRecentContractCreations(
     fromBlock: bigint,
     toBlock: bigint,
   ): Promise<ContractCreation[]> {
     const creations: ContractCreation[] = [];
+    const totalBlocks = Number(toBlock - fromBlock + 1n);
+    const scanStart = Date.now();
+    let blocksScanned = 0;
+    let slowCallCount = 0;
+
+    this.logger.info("discovery.scan.start", { fromBlock, toBlock, blockCount: totalBlocks });
 
     for (let blockNumber = fromBlock; blockNumber <= toBlock; blockNumber += 1n) {
-      const receipts = (await this.publicClient.request({
-        method: "eth_getBlockReceipts",
-        params: [numberToHex(blockNumber)],
-        // eth_getBlockReceipts isn't in viem's PublicRpcSchema — same
-        // unformatted-hex escape hatch as getLogs above.
-      } as unknown as Parameters<PublicClient["request"]>[0])) as unknown as
-        RawBlockReceiptItem[] | null;
+      const callStart = Date.now();
+      const block = (await this.publicClient.request({
+        method: "eth_getBlockByNumber",
+        params: [numberToHex(blockNumber), true],
+        // eth_getBlockByNumber(hash, true) returns full transaction
+        // objects, but not in viem's typed PublicRpcSchema shape we want
+        // here — same unformatted-hex escape hatch as getLogs above.
+      } as unknown as Parameters<
+        PublicClient["request"]
+      >[0])) as unknown as RawBlockWithTransactions | null;
+      const callElapsedMs = Date.now() - callStart;
+      blocksScanned++;
 
-      for (const receipt of receipts ?? []) {
-        if (receipt.contractAddress === null || receipt.status !== "0x1") continue;
+      if (callElapsedMs > DISCOVERY_SLOW_CALL_THRESHOLD_MS) {
+        slowCallCount++;
+        this.logger.warn("discovery.scan.slow_call", {
+          blockNumber,
+          elapsedMs: callElapsedMs,
+          method: "eth_getBlockByNumber",
+        });
+      }
+
+      const creationCandidates = (block?.transactions ?? []).filter((tx) => tx.to === null);
+      for (const tx of creationCandidates) {
+        const receiptCallStart = Date.now();
+        const receipt = (await this.publicClient.request({
+          method: "eth_getTransactionReceipt",
+          params: [tx.hash],
+        } as unknown as Parameters<
+          PublicClient["request"]
+        >[0])) as unknown as RawTransactionReceipt | null;
+        const receiptElapsedMs = Date.now() - receiptCallStart;
+
+        if (receiptElapsedMs > DISCOVERY_SLOW_CALL_THRESHOLD_MS) {
+          slowCallCount++;
+          this.logger.warn("discovery.scan.slow_call", {
+            blockNumber,
+            elapsedMs: receiptElapsedMs,
+            method: "eth_getTransactionReceipt",
+          });
+        }
+
+        if (receipt === null || receipt.contractAddress === null || receipt.status !== "0x1") {
+          continue;
+        }
         creations.push({
           address: getAddress(receipt.contractAddress),
           creatorAddress: getAddress(receipt.from),
@@ -631,7 +723,27 @@ export class RobinhoodAdapter implements ChainAdapter {
           blockNumber: hexToBigInt(receipt.blockNumber),
         });
       }
+
+      if (blocksScanned % DISCOVERY_PROGRESS_LOG_INTERVAL === 0) {
+        const elapsedSoFarMs = Date.now() - scanStart;
+        this.logger.info("discovery.scan.progress", {
+          blocksScanned,
+          totalBlocks,
+          elapsedMs: elapsedSoFarMs,
+          avgMsPerBlock: Math.round(elapsedSoFarMs / blocksScanned),
+          creationsFoundSoFar: creations.length,
+        });
+      }
     }
+
+    const totalElapsedMs = Date.now() - scanStart;
+    this.logger.info("discovery.scan.complete", {
+      blocksScanned,
+      totalElapsedMs,
+      avgMsPerBlock: blocksScanned > 0 ? Math.round(totalElapsedMs / blocksScanned) : 0,
+      slowCallCount,
+      creationsFound: creations.length,
+    });
 
     return creations;
   }

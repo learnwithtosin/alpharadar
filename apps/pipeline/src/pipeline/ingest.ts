@@ -1,6 +1,7 @@
 import type { ChainAdapter } from "@alpharadar/chain";
 import type { PrismaClient } from "@alpharadar/database";
 import type { Address, Hex } from "viem";
+import { withDbRetry } from "../db-retry.js";
 import { log } from "../logger.js";
 
 /**
@@ -129,9 +130,11 @@ export async function ingest(
 
   for (const address of candidateAddresses) {
     try {
-      const known = await prisma.contract.findUnique({
-        where: { chain_address: { chain: params.chain, address } },
-      });
+      const known = await withDbRetry("ingest.contract.findUnique", () =>
+        prisma.contract.findUnique({
+          where: { chain_address: { chain: params.chain, address } },
+        }),
+      );
       if (known) continue;
 
       // Always present — address came from this same creations array.

@@ -33,5 +33,7 @@ export {
   BlockscoutHttpError,
   CloudflareChallengeError,
   RpcHttpError,
+  RpcTimeoutError,
 } from "./errors.js";
 export { createRpcProvider, isCloudflareChallengeResponse } from "./rpc-client.js";
+export { defaultAdapterLogger, type AdapterLogger } from "./logger.js";

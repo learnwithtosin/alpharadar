@@ -210,7 +210,7 @@ describe("checkpoint DB retry — connection-level failures only", () => {
   function loggedRetries(spy: ReturnType<typeof vi.spyOn>): Record<string, unknown>[] {
     return spy.mock.calls
       .map(([line]) => JSON.parse(line as string) as Record<string, unknown>)
-      .filter((e) => e.event === "checkpoint.db.retry");
+      .filter((e) => e.event === "db.retry");
   }
 
   it("retries a connection error and succeeds once the connection recovers, logging each retry", async () => {
