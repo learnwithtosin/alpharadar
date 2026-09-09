@@ -1,7 +1,8 @@
 import type { ChainAdapter } from "@alpharadar/chain";
 import type { PrismaClient } from "@alpharadar/database";
+import type { TelegramClient } from "@alpharadar/telegram";
 import { log } from "./logger.js";
-import { alert } from "./pipeline/alert.js";
+import { alert, type AlertConfig } from "./pipeline/alert.js";
 import { analyze } from "./pipeline/analyze.js";
 import { ingest } from "./pipeline/ingest.js";
 import { resolve } from "./pipeline/resolve.js";
@@ -12,6 +13,9 @@ export interface PipelineDeps {
   prisma: PrismaClient;
   chainAdapter: ChainAdapter;
   chain: string;
+  /** Null when TELEGRAM_BOT_TOKEN isn't configured — alert() degrades to FAILED deliveries rather than throwing. */
+  telegramClient: TelegramClient | null;
+  alertConfig: AlertConfig;
 }
 
 export interface PipelineRunSummary {
@@ -68,7 +72,7 @@ export async function runPipeline(
       await verify(opportunityId, deps.chainAdapter, deps.prisma);
       await score(opportunityId, deps.prisma);
       await analyze(opportunityId);
-      await alert(opportunityId);
+      await alert(opportunityId, deps.prisma, deps.telegramClient, deps.alertConfig);
     } catch (error) {
       opportunitiesFailed++;
       log.error("runPipeline.opportunity.failed", error, { opportunityId });

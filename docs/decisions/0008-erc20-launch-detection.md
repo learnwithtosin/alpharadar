@@ -73,6 +73,27 @@ this sample) but real, observed, and non-zero.
 > `MAX_BLOCKS_PER_RUN` is unaffected — it's sized by RPC throughput, not
 > base rate (see below).
 
+> UPDATED (2026-09-09) — a fourth measurement disagrees with both rates
+> above, in the opposite direction from each other. Scanned 6,500 blocks
+> live (1,500 then a further 5,000, via `getRecentContractCreations` +
+> `getTokenMetadata`, same code path as production discovery — see
+> docs/decisions/0012-telegram-alert-stage.md, where this scan was run
+> looking for a real ERC-20 to seed dev-tooling test data) and found: 31
+> contract creations, **0 ERC-20**, **2 ERC-721** ("TAPE" and "Ponsino
+> Pass"). That's the inverse of every prior sample here — this decision's
+> original 3,000-block survey and its 3,000-block re-verification both
+> found ERC-721 completely absent (0 across 6,000 combined blocks) and
+> ERC-20 reliably present (1, then 6); this one found ERC-20 completely
+> absent and ERC-721 present twice. Combined across all four samples
+> (12,500 blocks total): ERC-20 7, ERC-721 2 — both real, neither
+> reliably absent. **Not changing this decision on the strength of one
+> more sample** — recorded because it further undercuts treating any
+> single window's rate (including this one) as a stable base rate; see
+> the bursty-activity conclusion two paragraphs up, which this extends
+> rather than contradicts. If ERC-721 activity keeps appearing, revisit
+> whether it still belongs behind ERC-20 in whatever ordering downstream
+> code assumes.
+
 ## Why keep the ERC-721 path instead of deleting it
 
 Zero-in-a-3-hour-sample is not zero-forever. Ripping the detector out

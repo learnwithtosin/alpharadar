@@ -1,5 +1,6 @@
 import { CloudflareChallengeError, type ChainAdapter } from "@alpharadar/chain";
 import type { PrismaClient } from "@alpharadar/database";
+import type { TelegramClient } from "@alpharadar/telegram";
 import {
   advanceCheckpoint,
   getNextRange,
@@ -7,6 +8,7 @@ import {
   type CheckpointRange,
 } from "../checkpoint.js";
 import { log } from "../logger.js";
+import type { AlertConfig } from "../pipeline/alert.js";
 import { runPipeline } from "../run-pipeline.js";
 
 export interface PollingDriverDeps {
@@ -15,6 +17,8 @@ export interface PollingDriverDeps {
   chain: string;
   /** See checkpoint.ts's getNextRange — how many most-recent blocks a single run may scan. */
   maxBlocksPerRun: bigint;
+  telegramClient: TelegramClient | null;
+  alertConfig: AlertConfig;
 }
 
 /**
@@ -60,6 +64,8 @@ export async function runPollingDriver(deps: PollingDriverDeps): Promise<void> {
       prisma: deps.prisma,
       chainAdapter: deps.chainAdapter,
       chain: deps.chain,
+      telegramClient: deps.telegramClient,
+      alertConfig: deps.alertConfig,
     });
     await advanceCheckpoint(deps.prisma, deps.chain, range.toBlock);
 

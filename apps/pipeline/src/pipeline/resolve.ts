@@ -39,6 +39,7 @@ async function findOrCreateProject(
   return prisma.project.create({
     data: {
       name: signal.tokenName ?? signal.tokenSymbol ?? signal.contractAddress,
+      symbol: signal.tokenSymbol ?? null,
       slug,
       chain,
       projectType: "NFT_COLLECTION",
@@ -86,6 +87,7 @@ async function findOrCreateTokenProject(
   return prisma.project.create({
     data: {
       name: signal.tokenName ?? signal.tokenSymbol ?? signal.contractAddress,
+      symbol: signal.tokenSymbol ?? null,
       slug,
       chain,
       projectType: "TOKEN",

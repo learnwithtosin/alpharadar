@@ -1,6 +1,7 @@
 import { NotImplementedError, ROBINHOOD_CHAIN_SLUG, RobinhoodAdapter } from "@alpharadar/chain";
 import { getEnv } from "@alpharadar/config";
 import { prisma } from "@alpharadar/database";
+import { TelegramClient } from "@alpharadar/telegram";
 import { runPollingDriver } from "./drivers/polling-driver.js";
 import { log } from "./logger.js";
 
@@ -34,11 +35,26 @@ async function main(): Promise<void> {
     );
   }
 
+  // TELEGRAM_BOT_TOKEN is optional at the schema level (dev/test can run
+  // without it) — a run with no token configured still completes, with
+  // every would-be delivery recorded as an Alert row with deliveryStatus
+  // FAILED (alert.ts), not a crashed pipeline.
+  const telegramClient = env.TELEGRAM_BOT_TOKEN
+    ? new TelegramClient({ botToken: env.TELEGRAM_BOT_TOKEN })
+    : null;
+
   await runPollingDriver({
     prisma,
     chainAdapter,
     chain: ROBINHOOD_CHAIN_SLUG,
     maxBlocksPerRun: BigInt(env.MAX_BLOCKS_PER_RUN),
+    telegramClient,
+    alertConfig: {
+      alertMinScore: env.ALERT_MIN_SCORE,
+      maxPerUserPerHour: env.ALERT_MAX_PER_USER_PER_HOUR,
+      dedupeWindowHours: env.ALERT_DEDUPE_WINDOW_HOURS,
+      webUrl: env.WEB_URL,
+    },
   });
 }
 

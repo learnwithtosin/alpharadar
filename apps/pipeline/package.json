@@ -4,11 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "tsx src/index.ts",
-    "dev": "tsx watch src/index.ts",
+    "start": "tsx --dns-result-order=ipv4first src/index.ts",
+    "dev": "tsx watch --dns-result-order=ipv4first src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "seed-test-opportunity": "tsx src/dev/seed-test-opportunity.ts",
+    "send-alert": "tsx --dns-result-order=ipv4first src/dev/send-alert.ts",
+    "bot": "tsx --dns-result-order=ipv4first src/dev/bot.ts"
   },
   "dependencies": {
     "@alpharadar/chain": "workspace:*",

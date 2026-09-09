@@ -291,6 +291,14 @@ model Wallet {
 model Project {
   id          String        @id @default(cuid())
   name        String
+  /// Additive for the Telegram token-alert template (03's "<token> /
+  /// <ticker>"), which needs a name and a ticker as two separate fields.
+  /// The pipeline's resolve() already receives tokenSymbol from
+  /// getTokenMetadata but previously only used it as a fallback for name,
+  /// discarding it otherwise — same category of gap as
+  /// Contract.deployerAddress earlier in this project. Null when the
+  /// symbol read failed/was unavailable (01 §8: unknown stays unknown).
+  symbol      String?
   slug        String        @unique
   description String?
   chain       String
@@ -298,6 +306,12 @@ model Project {
   status      ProjectStatus @default(ACTIVE)
   websiteUrl  String?
   logoUrl     String?
+  /// Set only by apps/pipeline/src/dev/seed-test-opportunity.ts (dev
+  /// tooling, never by the real pipeline) — a real, queryable flag so
+  /// seeded test rows can be filtered out of any real listing, not just
+  /// spotted by a name prefix. Defaults false; never true for anything
+  /// resolve() creates.
+  isTestData  Boolean       @default(false)
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
 
@@ -392,8 +406,13 @@ model Opportunity {
   chain           String?
   contractAddress String?
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  /// Set only by apps/pipeline/src/dev/seed-test-opportunity.ts (dev
+  /// tooling, never by the real pipeline) — see Project.isTestData's
+  /// comment. Indexed so a dashboard/API can cheaply exclude test rows
+  /// from any real listing.
+  isTestData Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   requirements    OpportunityRequirement[]
   events          OpportunityEvent[]
@@ -407,6 +426,7 @@ model Opportunity {
   @@index([status, type, detectedAt])
   @@index([projectId])
   @@index([chain, contractAddress])
+  @@index([isTestData])
 }
 
 model OpportunityRequirement {

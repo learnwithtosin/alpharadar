@@ -24,6 +24,17 @@ const ZERO_SUMMARY: PipelineRunSummary = {
 // by it — the windowing behavior itself is covered in checkpoint.test.ts.
 const UNBOUNDED_WINDOW = 1_000_000n;
 
+// runPipeline is mocked in this file (see below) — these two values only
+// need to satisfy runPollingDriver's type signature, never actually reach
+// alert(). Alert-stage behavior is covered in alert.test.ts.
+const TEST_TELEGRAM_CLIENT = null;
+const TEST_ALERT_CONFIG = {
+  alertMinScore: 60,
+  maxPerUserPerHour: 6,
+  dedupeWindowHours: 24,
+  webUrl: "https://alpharadar.test",
+};
+
 function makeChainAdapter(currentHead: bigint): ChainAdapter {
   return {
     getLatestBlockNumber: vi.fn().mockResolvedValue(currentHead),
@@ -69,6 +80,8 @@ describe("runPollingDriver", () => {
       chainAdapter,
       chain: "robinhood",
       maxBlocksPerRun: UNBOUNDED_WINDOW,
+      telegramClient: TEST_TELEGRAM_CLIENT,
+      alertConfig: TEST_ALERT_CONFIG,
     });
 
     expect(runPipelineMock).toHaveBeenCalledWith(100n, 100n, expect.anything());
@@ -92,6 +105,8 @@ describe("runPollingDriver", () => {
       chainAdapter,
       chain: "robinhood",
       maxBlocksPerRun: UNBOUNDED_WINDOW,
+      telegramClient: TEST_TELEGRAM_CLIENT,
+      alertConfig: TEST_ALERT_CONFIG,
     });
 
     expect(runPipelineMock).not.toHaveBeenCalled();
@@ -108,6 +123,8 @@ describe("runPollingDriver", () => {
         chainAdapter,
         chain: "robinhood",
         maxBlocksPerRun: UNBOUNDED_WINDOW,
+        telegramClient: TEST_TELEGRAM_CLIENT,
+        alertConfig: TEST_ALERT_CONFIG,
       }),
     ).rejects.toThrow("simulated crash");
 
@@ -124,6 +141,8 @@ describe("runPollingDriver", () => {
       chainAdapter,
       chain: "robinhood",
       maxBlocksPerRun: UNBOUNDED_WINDOW,
+      telegramClient: TEST_TELEGRAM_CLIENT,
+      alertConfig: TEST_ALERT_CONFIG,
     });
 
     expect(runPipelineMock).toHaveBeenLastCalledWith(100n, 100n, expect.anything());
@@ -140,6 +159,8 @@ describe("runPollingDriver", () => {
       chainAdapter,
       chain: "robinhood",
       maxBlocksPerRun: UNBOUNDED_WINDOW,
+      telegramClient: TEST_TELEGRAM_CLIENT,
+      alertConfig: TEST_ALERT_CONFIG,
     });
     expect(prisma.getState()).toMatchObject({ lastBlockNumber: 100n });
 
@@ -152,6 +173,8 @@ describe("runPollingDriver", () => {
         chainAdapter: chainAdapter2,
         chain: "robinhood",
         maxBlocksPerRun: UNBOUNDED_WINDOW,
+        telegramClient: TEST_TELEGRAM_CLIENT,
+        alertConfig: TEST_ALERT_CONFIG,
       }),
     ).rejects.toThrow("simulated crash");
 
@@ -165,6 +188,8 @@ describe("runPollingDriver", () => {
       chainAdapter: chainAdapter2,
       chain: "robinhood",
       maxBlocksPerRun: UNBOUNDED_WINDOW,
+      telegramClient: TEST_TELEGRAM_CLIENT,
+      alertConfig: TEST_ALERT_CONFIG,
     });
     expect(runPipelineMock).toHaveBeenLastCalledWith(101n, 150n, expect.anything());
     expect(prisma.getState()).toMatchObject({ lastBlockNumber: 150n, lastRunStatus: "SUCCESS" });
@@ -195,6 +220,8 @@ describe("runPollingDriver logging", () => {
       chainAdapter,
       chain: "robinhood",
       maxBlocksPerRun: UNBOUNDED_WINDOW,
+      telegramClient: TEST_TELEGRAM_CLIENT,
+      alertConfig: TEST_ALERT_CONFIG,
     });
 
     const events = loggedEvents(logSpy);
@@ -234,6 +261,8 @@ describe("runPollingDriver logging", () => {
       chainAdapter,
       chain: "robinhood",
       maxBlocksPerRun: UNBOUNDED_WINDOW,
+      telegramClient: TEST_TELEGRAM_CLIENT,
+      alertConfig: TEST_ALERT_CONFIG,
     });
 
     const events = loggedEvents(logSpy);
@@ -263,6 +292,8 @@ describe("runPollingDriver logging", () => {
         chainAdapter,
         chain: "robinhood",
         maxBlocksPerRun: UNBOUNDED_WINDOW,
+        telegramClient: TEST_TELEGRAM_CLIENT,
+        alertConfig: TEST_ALERT_CONFIG,
       }),
     ).rejects.toThrow("Blockscout request failed: 500");
 
@@ -298,6 +329,8 @@ describe("runPollingDriver logging", () => {
         chainAdapter,
         chain: "robinhood",
         maxBlocksPerRun: UNBOUNDED_WINDOW,
+        telegramClient: TEST_TELEGRAM_CLIENT,
+        alertConfig: TEST_ALERT_CONFIG,
       }),
     ).rejects.toThrow(CloudflareChallengeError);
 
@@ -338,6 +371,8 @@ describe("runPollingDriver logging", () => {
         chainAdapter,
         chain: "robinhood",
         maxBlocksPerRun: UNBOUNDED_WINDOW,
+        telegramClient: TEST_TELEGRAM_CLIENT,
+        alertConfig: TEST_ALERT_CONFIG,
       }),
     ).rejects.toThrow(CloudflareChallengeError);
 

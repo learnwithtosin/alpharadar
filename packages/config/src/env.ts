@@ -85,6 +85,14 @@ const envSchema = z.object({
   MAX_BLOCKS_PER_RUN: z.coerce.number().int().positive().default(500),
   ALERT_MIN_SCORE: z.coerce.number().int().min(0).max(100).default(60),
   ALERT_MAX_PER_USER_PER_HOUR: z.coerce.number().int().positive().default(6),
+  // 08 §4.4's dedupe window: "the same project cannot alert twice within N
+  // hours for the same actionProfile." N isn't prescribed by the spec —
+  // 24h (one alert per project+actionProfile per day) is a judgment call,
+  // not derived from data (there's no outcome data to tune it against yet,
+  // same caveat as the scoring weights in 08 §4.2). Global, not per-user —
+  // it gates whether this content gets sent to anyone again this soon, a
+  // separate concern from ALERT_MAX_PER_USER_PER_HOUR's per-recipient cap.
+  ALERT_DEDUPE_WINDOW_HOURS: z.coerce.number().int().positive().default(24),
 
   // AI — off by default per 09 §4 ("Interface built, flag off").
   AI_ENABLED: z
