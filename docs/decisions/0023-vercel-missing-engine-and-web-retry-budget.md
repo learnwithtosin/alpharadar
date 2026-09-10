@@ -94,6 +94,75 @@ function isConnectionError(error: unknown): boolean {
 ```
 A same-class error with any other code (or none, as with a missing engine) now fails immediately, on the first attempt — retrying it can never succeed, since the underlying cause is a missing file, not a transient state. Added a test (`db-retry.test.ts`) that constructs the exact missing-engine error shape confirmed above and asserts it is never retried.
 
+## 1c. The custom-output + outputFileTracingIncludes fix *also* failed — the real fix is dropping the native engine entirely
+
+Redeployed with 1b's fix. Region move confirmed working. The engine error persisted anyway, now with a third, more specific message:
+
+```
+Prisma Client could not locate the Query Engine for runtime "rhel-openssl-3.0.x".
+This is likely caused by a bundler that has not copied "libquery_engine-rhel-openssl-3.0.x.so.node" next to the resulting bundle.
+```
+
+Search paths this time included `/vercel/path0/packages/database/generated/client` — a **build-time-only** path (`/vercel/path0` is the build container; the function runs at `/var/task`), proving `outputFileTracingIncludes` had produced a path baked in at build time rather than a file actually shipped into the deployed function.
+
+Verified locally, rather than guessed, with a technique this sandbox has no other way to get ground truth on Vercel's real packaging (no network access to install the Vercel CLI for a real `vercel build`): built with Next's `output: "standalone"` (temporarily) and inspected `.next/standalone/` directly, then ran the actual standalone `server.js` and hit real routes.
+
+- The `.so.node` file **was** genuinely present in the standalone-copied tree, at `packages/database/generated/client/...` — proving `outputFileTracingIncludes` correctly copies the file.
+- Running the standalone server against a real DB (dummy credentials, to isolate the question) got *past* the engine error entirely, to a real "can't reach database server" failure — proving the engine loads fine from that location, at least via Next's own generic standalone packaging.
+- Yet Vercel's *actual* production logs showed the engine still unfound, with search paths that never even checked that location. This means Next's own tracing behaves correctly, but Vercel's real Lambda packaging is not a drop-in equivalent of `output: standalone`, and Prisma's own runtime locator only checks a small, fixed set of candidate paths — none of which matched wherever Vercel's real packaging put the file.
+
+Checked whether either of two further candidate fixes (moving the custom `output` inside `apps/web` itself, or further correcting `outputFileTracingIncludes`) was actually documented as correct, rather than guessing between them: found a live Prisma GitHub discussion (`prisma/orm#29339`) of someone hitting the *identical* error on Vercel + Next.js with `output` *already* placed inside their own single-app (non-monorepo) project — i.e., they'd already tried the "move output into the app" fix, with the same failure. The accepted answer there, consistent with Prisma's own pnpm-workspaces guide (which uses a driver adapter, not `binaryTargets`) and the `@prisma/nextjs-monorepo-workaround-plugin` npm listing (marked "no longer needed... the prisma-client generator now supports ESM and monorepos out of the box"): **stop shipping a native query-engine binary at all.** Use `@prisma/adapter-pg` with `engineType = "client"` — a Wasm-based query compiler, not the Rust engine — which "eliminates the entire class of Query Engine not found errors on Vercel, Cloudflare Workers, and any other serverless platform" (quoted directly from that discussion's accepted answer). Prisma 7 makes this the default.
+
+This is a bigger change than a config tweak — surfaced to the user explicitly rather than applied unilaterally, given it touches connection pooling (decision 0020's tuning) and retry classification (this decision's own earlier fix). Approved with two explicit conditions: verify pooling parameters and retry-error shapes empirically against the real adapter and the real pooler, not by assuming they carried over.
+
+### The migration
+
+`packages/database/package.json`: added `@prisma/adapter-pg` **pinned to the exact installed Prisma version** (`6.19.3`, matching `prisma`/`@prisma/client`) — `pnpm add` without a version resolved `@prisma/adapter-pg@^7.10.0` by default, a major-version mismatch against the installed 6.19.3 client that would not have been obviously wrong until it broke at runtime. Also added `pg` and `@types/pg`.
+
+`schema.prisma`'s generator block:
+```prisma
+generator client {
+  provider   = "prisma-client-js"
+  engineType = "client"
+  output     = "../generated/client"
+}
+```
+`binaryTargets` removed entirely. `engineType = "client"` is not optional here, confirmed the hard way: supplying `adapter` to `new PrismaClient({ adapter })` with the *default* engineType (`"library"`) still tried to load the native engine at query time and threw the exact same "could not locate the Query Engine" error — deliberately reproduced by moving the generated `.so.node` aside. The adapter alone only replaces the I/O transport; query compilation still needs the native/Wasm engine unless `engineType = "client"` says otherwise. With it, `prisma generate` produces `query_compiler_bg.wasm` (~2MB) instead of `libquery_engine-*.so.node` (~17.5MB) — reconfirmed by moving *every* generated engine/compiler artifact aside and running a real query, which failed with a plain `MODULE_NOT_FOUND` for `./query_compiler_bg.js` — a standard Node resolution error, not Prisma's multi-path engine search, confirming this asset is loaded like an ordinary module.
+
+`packages/database/src/index.ts` now constructs the client with the adapter:
+```ts
+const databaseUrl = new URL(process.env.DATABASE_URL);
+const connectionLimit = databaseUrl.searchParams.get("connection_limit");
+const poolTimeoutSeconds = databaseUrl.searchParams.get("pool_timeout");
+
+const adapter = new PrismaPg({
+  connectionString: process.env.DATABASE_URL,
+  ...(connectionLimit ? { max: Number(connectionLimit) } : {}),
+  ...(poolTimeoutSeconds ? { connectionTimeoutMillis: Number(poolTimeoutSeconds) * 1000 } : {}),
+});
+export const prisma = globalForPrisma.prisma ?? new PrismaClient({ adapter });
+```
+
+**Pooling, verified rather than assumed (per the user's explicit condition)**: `@prisma/adapter-pg` does not read `connection_limit`/`pool_timeout` off the connection string the way the native engine did — confirmed against Prisma's own connection-pool-mapping documentation, `connection_limit` maps to `pg.Pool`'s `max`, `pool_timeout` (seconds) maps to `connectionTimeoutMillis` (ms). Rather than requiring new, separately-set env vars on both deployment targets, the code above parses the *existing* `connection_limit`/`pool_timeout` values straight out of `DATABASE_URL` and maps them itself — so `apps/pipeline`'s GitHub Actions secret (`connection_limit=5`) and `apps/web`'s Vercel dashboard var (once updated to `connection_limit=1` per §4 above) keep working unchanged; neither needs to be touched for this migration. `pgbouncer=true` stays in the connection string passed to the adapter unmodified — Prisma's own current PgBouncer-with-driver-adapters documentation keeps it there verbatim in its own example, so it isn't a dead leftover.
+
+**Retry classification, verified rather than assumed (per the user's other explicit condition)** — and this genuinely changed, in a way that would have silently broken retries if shipped unchecked: a real connection failure through the adapter does **not** reliably surface as `PrismaClientInitializationError` with `errorCode: "P1001"` the way decision 0020 measured for the native engine. Reproduced three distinct shapes live, against real broken connections (and one live pooler blip caught by accident, unprompted, mid-investigation against the real, unmodified `DATABASE_URL`):
+
+1. `PrismaClientInitializationError` / `errorCode: "P1001"` — the original shape. Not reproduced against the adapter in this investigation; kept for defense.
+2. `PrismaClientKnownRequestError` / `code: "P1001"` — what an *actively refused* connection actually throws. Same P1001 code and message as (1), but a different error **class**, with `code` not `errorCode`.
+3. A plain `Error` — literally `Error`, prototype chain `Error -> Object` — message `"Connection terminated due to connection timeout"`, stamped only with a `clientVersion` field. What a *timed-out* connection throws: `PrismaPgAdapter.performIO` rethrows `pg`/`pg-pool`'s own error almost verbatim rather than mapping it to any Prisma class. **This is the shape that actually matters**: decision 0020 found every real observed pooler outage timed out at a uniform ~5s, never an active refusal, and this exact shape is what the live blip caught mid-investigation produced against the real pooler — not just a synthetic approximation.
+
+A genuine query-level failure (checked against a real unique-constraint violation) stays correctly wrapped as `PrismaClientKnownRequestError` with a non-P1001 code regardless, so none of this risks retrying a real bug. `isConnectionError` now checks all three shapes; (3)'s message-string match is the fragile part (`pg-pool`'s own wording, not a stable Prisma code) — flagged in the code comment to re-verify live if `pg`/`pg-pool`/`@prisma/adapter-pg` ever bump a major version, the same "re-measure, don't assume" discipline as decision 0020's budget sizing.
+
+### The Wasm compiler still needed its own fix — a different, better-behaved version of the same class of bug
+
+Even with the native engine gone, a production `next build` still threw — this time a clean `ENOENT: ... open '<app root>/generated/client/query_compiler_bg.wasm'`, not Prisma's opaque multi-path search. Confirmed live: Prisma's bundled runtime computes this Wasm file's path relative to its own bundled location, which resolves to an **app-root-relative** `generated/client/` convention (`apps/web/generated/client/...`) regardless of what `schema.prisma`'s `output` actually points to (`packages/database/generated/client`). `outputFileTracingIncludes` can only preserve a copied file's path relative to where it actually lives — it cannot relocate it to a different destination — so the only way to make the path Prisma's runtime computes resolve to a real file is to put a copy of the compiler files at that exact app-relative location.
+
+Added `apps/web/scripts/copy-prisma-wasm.mjs` (copies `query_compiler_bg.js`/`.wasm` from `packages/database/generated/client` into `apps/web/generated/client`, gitignored, run from new `predev`/`prebuild` npm scripts, after `prisma generate`) rather than a second Prisma generator block pointed at the same output — that would regenerate an entire second unused client (full type declarations, `index.js`, etc.) just to relocate two small runtime files. `next.config.ts`'s `outputFileTracingIncludes` now points at this real, in-project-root copy instead of the old cross-package `.so.node` path.
+
+### Verified against the real deployed-bundle shape *and* a real running server, not just a manifest listing
+
+Same `output: "standalone"` technique as 1b, taken one step further this time: after confirming `query_compiler_bg.wasm` is physically present in the standalone tree at the app-relative path, **ran the actual standalone `server.js` against the real database and hit real routes** — `/opportunities` and `/` both returned `HTTP 200` with genuine rendered data (opportunity rows; "SCAN 7h ago" from the real `IngestionCheckpoint`), not just a passing trace-manifest check. This is a stronger verification than 1b's (which stopped at "the file exists and the engine loads with dummy credentials") — this one exercises the complete path against production data.
+
 ## 2. Region: Vercel functions were in Washington, the database is in Frankfurt
 
 Vercel's default region for new projects is `iad1` (Washington, D.C.). Supabase for this project is `eu-central-1` (Frankfurt). Every query paid a transatlantic round trip on top of whatever the query itself cost.
@@ -135,15 +204,18 @@ Fetched Supabase's own troubleshooting documentation directly. Findings:
 
 ## What's still outstanding
 
-- The Vercel dashboard changes (`connection_limit=1` on `apps/web`'s `DATABASE_URL`) have not been applied — they require the user to update them directly.
-- The custom-output/`outputFileTracingIncludes` engine fix and retry-classification fix take effect on the next deploy; the region move was already redeployed and confirmed live (`fra1`, 58ms), but this second round has not yet been.
-- TTFB before/after, from the deployed site itself (not local): not yet measured — requires the deployed URL, which I don't have access to independently of the user providing it, and requires a fresh deploy to reflect these fixes.
+- The Vercel dashboard change (`connection_limit=1` on `apps/web`'s `DATABASE_URL`) has not been applied — requires the user to update it directly. Unlike before the adapter migration, this is now read by our own code (`packages/database/src/index.ts`) rather than the native engine, but the value and where it's set are unchanged.
+- Everything in §1c (the adapter migration, `engineType = "client"`, the wasm-compiler copy step) has not yet been deployed to Vercel — verified thoroughly locally (including a real standalone server run against production data), but not yet against Vercel's actual packaging, which 1b and 1c both found behaves differently from any local proxy in ways only a real deploy fully confirms.
+- TTFB before/after, from the deployed site itself (not local): still not measured — needs the deployed URL and a fresh deploy reflecting all of this.
+- `isConnectionError`'s shape (3) (plain `Error`, message match) rests on `pg-pool`'s current error wording, not a stable Prisma-assigned code — flagged in the code comment as the thing to re-verify live if `pg`/`pg-pool`/`@prisma/adapter-pg` ever bump a major version.
+- Pool-exhaustion behavior (Prisma's old `P2024` timeout-waiting-for-a-connection-slot case) was not re-tested against the adapter — decision 0020 never observed this in practice against the native engine either, so it stayed out of scope here too, but it's untested with the adapter specifically.
 
 ## Verification
 
-- `pnpm --filter @alpharadar/database test` — 2 files, 17 tests pass (12 schema.test.ts + 5 db-retry.test.ts, including the new missing-engine-is-not-retried case).
-- `pnpm typecheck`, `pnpm lint`, `pnpm format:check` — clean across the whole monorepo, including after the custom `output`/import-path change.
-- `pnpm test` (full monorepo) — 348 tests pass, no regressions (apps/pipeline's own connection-error test helpers already construct `"P1001"` explicitly, so the narrowed classifier doesn't affect them).
-- Live-confirmed the `rhel-openssl-3.0.x` engine binary is actually produced by `prisma generate` at the new custom output path (checked the directory directly).
-- Live-confirmed the exact shape of a missing-engine error (deliberately removed the generated binaries, caught the real thrown error) to write `isConnectionError`'s narrowing correctly rather than by inference from documentation alone.
-- **Ran an actual `next build` and inspected the resulting `.nft.json` trace manifests** — the artifact Vercel's build uses to decide what ships to `/var/task` — and confirmed every Prisma-touching route's manifest lists both engine binaries at a real, resolvable path, byte-verified against the 17,547,808-byte file on disk. This directly answers "does the deployed bundle contain the engine," which a green build alone does not.
+- `pnpm --filter @alpharadar/database test` — 2 files, 21 tests pass (12 schema.test.ts, rewritten to parse `schema.prisma`'s own source text directly since `Prisma.dmmf` no longer exists at runtime with `engineType = "client"`, confirmed live; 9 db-retry.test.ts, covering all three real connection-error shapes plus two negative cases proving the new plain-`Error` match doesn't swallow unrelated bugs).
+- `pnpm typecheck`, `pnpm lint`, `pnpm format:check` — clean across the whole monorepo.
+- `pnpm test` (full monorepo) — 352 tests pass, no regressions (`apps/pipeline`'s own connection-error test helpers construct the original `P1001`/`PrismaClientInitializationError` shape explicitly, still matched by the retained first branch of `isConnectionError`).
+- **Real queries against the real Supabase pooler**, not mocks, at every stage: confirmed the adapter connects and queries successfully; confirmed three repeated/interleaved query shapes back-to-back raise no PgBouncer prepared-statement error; deliberately caused three distinct real connection failures (bad port, unroutable host, actively-refused port) and captured each one's exact thrown shape before writing `isConnectionError`; one additional live pooler outage was caught by accident, unprompted, confirming shape (3) against a real production-shaped failure, not only synthetic ones.
+- Confirmed the native engine is genuinely gone as a runtime dependency (moved the generated `.so.node` aside — real query still succeeded) and confirmed what actually IS required (moved the wasm compiler files aside too — real query then failed with a plain `MODULE_NOT_FOUND`, not Prisma's engine-search error).
+- **Ran a real `next build`, then the actual standalone `server.js`, against the real database**: `/opportunities` and `/` both returned `HTTP 200` with genuine rendered data (real opportunity rows; "SCAN 7h ago" from the real `IngestionCheckpoint`) — not just a trace-manifest listing or a build that exits 0, but the complete path exercised end-to-end against production data, from a bundle shaped like what Vercel would deploy.
+- apps/pipeline's own runtime context (plain `tsx`, not bundled) also re-verified directly against the real pooler after the migration, since it now goes through the same adapter code.

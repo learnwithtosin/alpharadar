@@ -20,25 +20,23 @@ const nextConfig: NextConfig = {
     };
     return config;
   },
-  // Belt-and-suspenders for the same problem extensionAlias above works
-  // around, one layer deeper: Next's output file tracing decides what a
-  // deployed serverless function actually ships by walking real
-  // `import`/`require` statements. Prisma's native query engine
-  // (packages/database/generated/client/libquery_engine-*.so.node — see
-  // schema.prisma's generator comment) is never `require()`d; Prisma's own
-  // runtime finds it via a computed filesystem path at query time. That
-  // makes it invisible to the trace regardless of where it lives, so the
-  // "Prisma Client could not locate the Query Engine" error persisted even
-  // after moving the generator's `output` out of pnpm's hoisted store into
-  // this real, traceable path — the path became inspectable, but nothing
-  // was actually asking to inspect it. This is Next.js's own documented
-  // fix, and Prisma's own linked fix for this exact error on Next.js
-  // (https://pris.ly/d/engine-not-found-nextjs): explicitly tell the
-  // tracer to include it. `/**` (every route) because Prisma is reachable
-  // from every page via AppHeader in the root layout, not just the pages
-  // that query it directly.
+  // packages/database's schema.prisma now uses @prisma/adapter-pg with
+  // `engineType = "client"` — no native query-engine binary exists
+  // anymore, only a much smaller Wasm query compiler
+  // (query_compiler_bg.wasm). That still isn't reachable through a real
+  // `import`/`require` Next's tracer can follow: it's loaded by a path
+  // Prisma's runtime computes relative to its own bundled location,
+  // confirmed live to resolve to an app-root-relative
+  // "generated/client/query_compiler_bg.wasm" regardless of where
+  // schema.prisma's `output` actually points (a real ENOENT at exactly
+  // that path, thrown from the bundled server chunk, is what confirmed
+  // this — not documentation). scripts/copy-prisma-wasm.mjs (run from
+  // `predev`/`prebuild`) copies the real generated file to that app-root
+  // path so it exists at all; this tells Next's build to actually ship it
+  // from there into the deployed function. See
+  // docs/decisions/0023-vercel-missing-engine-and-web-retry-budget.md.
   outputFileTracingIncludes: {
-    "/**": ["../../packages/database/generated/client/*.so.node"],
+    "/**": ["./generated/client/*"],
   },
 };
 

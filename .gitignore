@@ -17,6 +17,7 @@ out/
 
 # Prisma
 packages/database/generated/
+apps/web/generated/
 
 # Testing
 coverage/

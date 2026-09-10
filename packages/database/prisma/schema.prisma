@@ -14,49 +14,47 @@
 // mirror packages/types/src/*.ts. Prisma's schema DSL cannot import those
 // definitions, so the two must be kept in sync by hand.
 
-// "native" generates the engine matching whatever OS actually runs
-// `prisma generate` (this machine for local dev; Vercel's own build
-// container for the Vercel build step) — without it, only the explicit
-// targets below would be generated, breaking local dev/CI on a non-RHEL
-// machine. "rhel-openssl-3.0.x" is Prisma's own documented target for
-// Vercel's Node.js serverless runtime (Amazon-Linux-2023-based Lambda,
-// glibc + OpenSSL 3.0). Without it, `prisma generate`'s build-time
-// output never contains an engine binary the deployed runtime can
-// actually load — "Prisma Client could not locate the Query Engine" is
-// exactly that: a missing binary, not a connection problem, and no
-// amount of retrying fixes it.
+// No binaryTargets. Two straight fixes for the native rhel-openssl-3.0.x
+// query engine binary — first generating it for Vercel's runtime, then
+// moving `output` + adding outputFileTracingIncludes so the file itself
+// is genuinely present in the deployed bundle — both failed anyway: the
+// error persisted with search paths proving Prisma's own runtime loader
+// never checks wherever Next.js's bundler actually puts a native binary
+// that's loaded via a computed filesystem path rather than a real
+// `import`. This is a documented, still-open class of bug across
+// Next.js + Vercel + pnpm-workspace Prisma deployments generally (not
+// specific to this repo's layout — reproduced identically by an
+// unrelated single-app, non-monorepo Next.js project with output already
+// placed inside its own app directory: prisma/orm#29339). Prisma's own
+// current direction, confirmed across their pnpm-workspaces guide, the
+// (now `no longer needed`) @prisma/nextjs-monorepo-workaround-plugin, and
+// Prisma 7 defaulting away from binary engines, is to stop shipping a
+// native binary at all.
 //
-// binaryTargets alone wasn't enough, confirmed live on the actual Vercel
-// deployment: the rhel-openssl-3.0.x engine WAS generated at build time,
-// but Vercel's build still didn't ship it, because Next.js's output
-// file tracing decides what gets copied into the deployed function
-// bundle by walking the module graph from actual `import`/`require`
-// statements — a native .so.node binary, loaded by Prisma's runtime via
-// a computed filesystem path rather than a real import, is invisible to
-// that trace no matter where it lives. Two changes fix it together,
-// following Prisma's own current pnpm-workspace guidance and the
-// documented Next.js fix for this exact error
-// (https://pris.ly/d/engine-not-found-nextjs):
+// packages/database/src/index.ts constructs PrismaClient with a
+// @prisma/adapter-pg driver adapter. `engineType = "client"` is required
+// alongside that, not optional — confirmed live, the hard way: supplying
+// `adapter` to `new PrismaClient({ adapter })` with the DEFAULT engineType
+// ("library") still tried to load the native
+// libquery_engine-*.so.node engine at query time and threw the exact same
+// "could not locate the Query Engine" error, deliberately reproduced by
+// moving that binary aside — the adapter alone only replaces the I/O
+// transport, not query compilation, unless engineType is "client". With
+// it, Prisma uses a small Wasm query COMPILER (not the old wasm-compiled
+// full Rust engine) that ships as an ordinary importable module rather
+// than something loaded via a computed filesystem path, so it doesn't hit
+// this class of bug — reconfirmed the same way, by moving every generated
+// engine artifact aside and running a real query successfully. See
+// docs/decisions/0023-vercel-missing-engine-and-web-retry-budget.md.
 //
-// 1. `output` moves the generated client (code + engine binaries) out
-//    of the default pnpm-hoisted `node_modules/.pnpm/.../node_modules/
-//    .prisma/client` location and into a real, fixed path inside this
-//    package (packages/database/generated/client, gitignored, produced
-//    fresh by `prisma generate` in both local dev and the Vercel build
-//    step via apps/web's `build` script). This alone does not fix the
-//    tracing gap above — the binary is still loaded dynamically — but it
-//    gives `outputFileTracingIncludes` (apps/web/next.config.ts) a
-//    stable, explicit path to name, instead of a pnpm content-hash path
-//    that changes with the lockfile.
-// 2. apps/web/next.config.ts's `outputFileTracingIncludes` explicitly
-//    tells Next's build to copy this path's engine binaries into the
-//    deployed bundle regardless of what the automatic trace finds.
-//
-// See docs/decisions/0023-vercel-missing-engine-and-web-retry-budget.md.
+// `output` stays a real path inside this package (not the pnpm-hoisted
+// default) — unrelated to the binary problem now, but still correct: it
+// keeps the generated client's location stable and inspectable rather
+// than a pnpm content-hash path that shifts with the lockfile.
 generator client {
-  provider      = "prisma-client-js"
-  binaryTargets = ["native", "rhel-openssl-3.0.x"]
-  output        = "../generated/client"
+  provider   = "prisma-client-js"
+  engineType = "client"
+  output     = "../generated/client"
 }
 
 // Supabase requires two connection strings: DATABASE_URL is the pooled
