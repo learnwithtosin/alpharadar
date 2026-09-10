@@ -75,7 +75,7 @@ describe("advanceCheckpoint", () => {
     const upsert = vi.fn().mockResolvedValue({});
     const prisma = makePrisma({ upsert });
 
-    await advanceCheckpoint(prisma, "robinhood", 56_950_000n);
+    await advanceCheckpoint(prisma, "robinhood", 56_950_000n, 10_000n);
 
     expect(upsert).toHaveBeenCalledTimes(1);
     const call = upsert.mock.calls[0]?.[0];
@@ -91,6 +91,17 @@ describe("advanceCheckpoint", () => {
       lastRunStatus: "SUCCESS",
       lastRunError: null,
     });
+  });
+
+  it("sets totalBlocksScanned directly on create, and increments it atomically on update", async () => {
+    const upsert = vi.fn().mockResolvedValue({});
+    const prisma = makePrisma({ upsert });
+
+    await advanceCheckpoint(prisma, "robinhood", 56_950_000n, 150n);
+
+    const call = upsert.mock.calls[0]?.[0];
+    expect(call.create).toMatchObject({ totalBlocksScanned: 150n });
+    expect(call.update).toMatchObject({ totalBlocksScanned: { increment: 150n } });
   });
 });
 
@@ -188,7 +199,7 @@ describe("getNextRange — accepted block window (gaps are skipped, not backfill
     const prisma = makePrisma({ findUnique, upsert });
 
     const range = await getNextRange(prisma, "robinhood", 56_950_000n, 150n);
-    await advanceCheckpoint(prisma, "robinhood", range!.toBlock);
+    await advanceCheckpoint(prisma, "robinhood", range!.toBlock, 150n);
 
     expect(upsert.mock.calls[0]?.[0].update).toMatchObject({ lastBlockNumber: 56_950_000n });
   });
@@ -274,7 +285,7 @@ describe("checkpoint DB retry — connection-level failures only", () => {
       .mockResolvedValueOnce({ count: 1 });
     const prisma = makePrisma({ upsert, updateMany });
 
-    const advancePromise = advanceCheckpoint(prisma, "robinhood", 100n);
+    const advancePromise = advanceCheckpoint(prisma, "robinhood", 100n, 50n);
     await vi.runAllTimersAsync();
     await advancePromise;
     expect(upsert).toHaveBeenCalledTimes(2);

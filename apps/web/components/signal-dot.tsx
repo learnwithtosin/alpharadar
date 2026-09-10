@@ -6,7 +6,16 @@ import { cn } from "@/lib/utils";
  * keyframes), so a stale contact renders this exact same markup with no
  * animation class at all — not a paused/dimmed animation, genuinely none.
  */
-export function SignalDot({ fresh, className }: { fresh: boolean; className?: string }) {
+export function SignalDot({
+  fresh,
+  className,
+  title,
+}: {
+  fresh: boolean;
+  className?: string;
+  /** Only meaningful when the dot appears with no adjacent label text (the mobile header). */
+  title?: string;
+}) {
   return (
     <span
       className={cn(
@@ -16,6 +25,7 @@ export function SignalDot({ fresh, className }: { fresh: boolean; className?: st
           : "bg-muted-foreground/40",
         className,
       )}
+      title={title}
       aria-hidden="true"
     />
   );

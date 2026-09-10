@@ -67,7 +67,12 @@ export async function runPollingDriver(deps: PollingDriverDeps): Promise<void> {
       telegramClient: deps.telegramClient,
       alertConfig: deps.alertConfig,
     });
-    await advanceCheckpoint(deps.prisma, deps.chain, range.toBlock);
+    await advanceCheckpoint(
+      deps.prisma,
+      deps.chain,
+      range.toBlock,
+      range.toBlock - range.fromBlock + 1n,
+    );
 
     log.info("pipeline.run.complete", {
       chain: deps.chain,

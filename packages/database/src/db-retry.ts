@@ -1,5 +1,4 @@
-import { Prisma } from "@alpharadar/database";
-import { log } from "./logger.js";
+import { Prisma } from "@prisma/client";
 
 const DB_RETRY_MAX_ATTEMPTS = 4;
 const DB_RETRY_BASE_DELAY_MS = 300;
@@ -15,13 +14,24 @@ function isConnectionError(error: unknown): boolean {
 }
 
 /**
- * Bounded retry, exponential backoff + jitter, for any Prisma call —
- * originally built for the checkpoint's own reads/writes specifically,
- * extended here to cover ingest.ts's per-candidate reads too, since the
- * same "Can't reach database server at ...pooler.supabase.com:6543" blip
- * has now been observed hitting a plain per-candidate query, not just
- * checkpoint calls. Confirmed in production, four separate times: this
- * failure always succeeds on the very next attempt — a transient failure,
+ * One JSON line per retry, so the flakiness stays visible in whatever log
+ * aggregates stdout/stderr — a GitHub Actions log for apps/pipeline, the
+ * server console for apps/web — without either app's own logger being a
+ * dependency of this package (packages/* must not depend on apps/*).
+ */
+function logRetry(fields: Record<string, unknown>): void {
+  console.info(
+    JSON.stringify({ timestamp: new Date().toISOString(), event: "db.retry", ...fields }),
+  );
+}
+
+/**
+ * Bounded retry, exponential backoff + jitter, for any Prisma call. Shared
+ * by apps/pipeline (where it originated — the checkpoint's own reads/
+ * writes, then extended to ingest.ts's per-candidate reads) and apps/web
+ * (its Server Component queries hit the same pooler and the same blip).
+ * Confirmed in production, repeatedly, across both apps: this failure
+ * always succeeds on the very next attempt or two — a transient failure,
  * not a permanent one (03-CLAUDE-BUILD-PROMPT.md's error-handling rule).
  * Every retry is logged so the flakiness stays visible rather than hidden.
  */
@@ -40,7 +50,7 @@ export async function withDbRetry<T>(operation: string, fn: () => Promise<T>): P
         DB_RETRY_MAX_DELAY_MS,
       );
       const delayMs = Math.round(backoffMs * (0.85 + Math.random() * 0.3));
-      log.info("db.retry", {
+      logRetry({
         operation,
         attempt,
         maxAttempts: DB_RETRY_MAX_ATTEMPTS,

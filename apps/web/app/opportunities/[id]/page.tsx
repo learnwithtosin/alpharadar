@@ -1,14 +1,26 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import type { RiskLevel } from "@alpharadar/types";
-import { prisma } from "@alpharadar/database";
+import { unstable_cache } from "next/cache";
+import type {
+  ActionProfile,
+  EvidenceType,
+  OpportunityType,
+  RiskLevel,
+  SourceType,
+  Urgency,
+} from "@alpharadar/types";
+import type { Prisma } from "@alpharadar/database";
+import { prisma, withDbRetry } from "@alpharadar/database";
 import { BracketHeader } from "@/components/bracket-header";
 import { ChainBadge, RiskBadge, UrgencyBadge } from "@/components/domain-badges";
 import { CopyAddressButton } from "@/components/copy-address-button";
+import { ExternalLink } from "@/components/external-link";
 import { JsonRows } from "@/components/json-rows";
+import { Section } from "@/components/section";
 import { SignalDot } from "@/components/signal-dot";
 import { scoreClassName, scoreGlowClassName } from "@/lib/domain-colors";
 import { formatAbsolute, formatAge, FRESHNESS_THRESHOLD_MS, isFresh } from "@/lib/format";
+import { BODY_TEXT, LABEL_TEXT } from "@/lib/typography";
 import { cn } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -31,6 +43,132 @@ interface RiskDimensions {
   linkRisk: RiskLevel;
 }
 
+/**
+ * A stored opportunity barely changes after scoring (score/risk/evidence
+ * are all written once, at detection time) — cached the same way as the
+ * opportunities list (docs/decisions/0017/0018): `unstable_cache`, 60s,
+ * a JSON-safe DTO (Date flattened to ISO, reconstructed by the caller)
+ * since Prisma's `Date` isn't JSON-serializable and unstable_cache
+ * persists its entries as JSON. `id` is part of the wrapped function's
+ * arguments, so Next.js keys each opportunity's cache entry separately —
+ * this is not one shared entry for every detail page.
+ *
+ * Retry and the error boundary are unchanged: a cache miss runs the real,
+ * retried query, and a genuine failure (retries exhausted) still throws
+ * through to error.tsx uncaught. `null` (opportunity truly doesn't exist)
+ * is a different, cacheable, non-error outcome — notFound() below.
+ */
+interface CachedEvidence {
+  id: string;
+  claim: string;
+  evidenceType: EvidenceType;
+  sourceType: SourceType;
+  sourcePublisher: string | null;
+  sourceUrl: string;
+}
+
+interface CachedRisk {
+  overallRisk: RiskLevel;
+  contractRisk: RiskLevel;
+  concentrationRisk: RiskLevel;
+  deployerRisk: RiskLevel;
+  liquidityRisk: RiskLevel;
+  socialRisk: RiskLevel;
+  linkRisk: RiskLevel;
+  reasons: string[];
+}
+
+interface CachedOpportunityDetail {
+  projectName: string;
+  chain: string | null;
+  type: OpportunityType;
+  actionProfile: ActionProfile;
+  score: number | null;
+  urgency: Urgency | null;
+  contractAddress: string | null;
+  officialActionUrl: string | null;
+  detectedAt: string;
+  scoreInputs: Prisma.JsonValue;
+  scoringVersion: string | null;
+  evidence: CachedEvidence[];
+  risk: CachedRisk | null;
+}
+
+const getCachedOpportunityDetail = unstable_cache(
+  async (id: string): Promise<CachedOpportunityDetail | null> => {
+    const opportunity = await withDbRetry("OpportunityDetailPage.opportunity", () =>
+      prisma.opportunity.findUnique({
+        where: { id },
+        include: {
+          project: true,
+          riskAssessments: { orderBy: { createdAt: "desc" }, take: 1 },
+          evidence: { include: { source: true }, orderBy: { createdAt: "desc" } },
+        },
+      }),
+    );
+    if (!opportunity) return null;
+    const risk = opportunity.riskAssessments[0] ?? null;
+    return {
+      projectName: opportunity.project.name,
+      chain: opportunity.chain,
+      type: opportunity.type,
+      actionProfile: opportunity.actionProfile,
+      score: opportunity.score,
+      urgency: opportunity.urgency,
+      contractAddress: opportunity.contractAddress,
+      officialActionUrl: opportunity.officialActionUrl,
+      detectedAt: opportunity.detectedAt.toISOString(),
+      scoreInputs: opportunity.scoreInputs,
+      scoringVersion: opportunity.scoringVersion,
+      evidence: opportunity.evidence.map((e) => ({
+        id: e.id,
+        claim: e.claim,
+        evidenceType: e.evidenceType,
+        sourceType: e.source.type,
+        sourcePublisher: e.source.publisher,
+        sourceUrl: e.source.url,
+      })),
+      risk: risk
+        ? {
+            overallRisk: risk.overallRisk,
+            contractRisk: risk.contractRisk,
+            concentrationRisk: risk.concentrationRisk,
+            deployerRisk: risk.deployerRisk,
+            liquidityRisk: risk.liquidityRisk,
+            socialRisk: risk.socialRisk,
+            linkRisk: risk.linkRisk,
+            reasons: risk.reasons,
+          }
+        : null,
+    };
+  },
+  ["opportunity-detail"],
+  { revalidate: 60 },
+);
+
+/** A contract row is effectively immutable after ingest — cached for the same reason. */
+interface CachedContract {
+  contractType: string;
+  verified: boolean;
+  deployerAddress: string | null;
+}
+
+const getCachedContract = unstable_cache(
+  async (chain: string, address: string): Promise<CachedContract | null> => {
+    const contract = await withDbRetry("OpportunityDetailPage.contract", () =>
+      prisma.contract.findUnique({ where: { chain_address: { chain, address } } }),
+    );
+    if (!contract) return null;
+    return {
+      contractType: contract.contractType,
+      verified: contract.verified,
+      deployerAddress: contract.deployerAddress,
+    };
+  },
+  ["opportunity-contract"],
+  { revalidate: 60 },
+);
+
 export default async function OpportunityDetailPage({
   params,
 }: {
@@ -38,29 +176,34 @@ export default async function OpportunityDetailPage({
 }) {
   const { id } = await params;
 
-  const opportunity = await prisma.opportunity.findUnique({
-    where: { id },
-    include: {
-      project: true,
-      riskAssessments: { orderBy: { createdAt: "desc" }, take: 1 },
-      evidence: { include: { source: true }, orderBy: { createdAt: "desc" } },
-    },
-  });
+  // The page's reason for existing — retried against the transient
+  // Supabase pooler blip, but not swallowed: once retries are exhausted,
+  // this throws through to the nearest error.tsx boundary, which renders
+  // a real error page rather than a stack trace. Different from a
+  // genuinely missing opportunity (notFound() below), which is not a
+  // failure at all.
+  const cached = await getCachedOpportunityDetail(id);
 
-  if (!opportunity) {
+  if (!cached) {
     notFound();
   }
 
-  const contract =
-    opportunity.chain && opportunity.contractAddress
-      ? await prisma.contract.findUnique({
-          where: {
-            chain_address: { chain: opportunity.chain, address: opportunity.contractAddress },
-          },
-        })
-      : null;
+  const opportunity = { ...cached, detectedAt: new Date(cached.detectedAt) };
 
-  const risk = opportunity.riskAssessments[0] ?? null;
+  // Supplementary — the CONTRACT panel already renders "Unknown" for
+  // every field when no contract row exists, so a failed read degrades
+  // to that same fallback rather than taking the whole page down over a
+  // decode of fields the opportunity itself doesn't strictly need.
+  let contract: CachedContract | null | undefined;
+  if (opportunity.chain && opportunity.contractAddress) {
+    try {
+      contract = await getCachedContract(opportunity.chain, opportunity.contractAddress);
+    } catch {
+      // Degrade to "Unknown" fields below, don't crash the page.
+    }
+  }
+
+  const risk = opportunity.risk;
   const overallRisk: RiskLevel = risk?.overallRisk ?? "UNKNOWN";
   const fresh = isFresh(opportunity.detectedAt, FRESHNESS_THRESHOLD_MS);
 
@@ -70,11 +213,11 @@ export default async function OpportunityDetailPage({
         href="/opportunities"
         className="font-display text-muted-foreground hover:text-foreground text-xs font-bold tracking-wide"
       >
-        ‹ CONTACTS
+        ‹ OPPORTUNITIES
       </Link>
 
       <div className="mt-6 lg:grid lg:grid-cols-[1.3fr_1fr] lg:items-start lg:gap-10">
-        {/* ---------------- hero: score, threat class, why — the five-second test ---------------- */}
+        {/* ---------------- hero: score, risk, why — the five-second test ---------------- */}
         <div>
           <div className="mb-1 flex flex-wrap items-center gap-2.5">
             <ChainBadge chain={opportunity.chain} />
@@ -83,7 +226,7 @@ export default async function OpportunityDetailPage({
             </span>
           </div>
           <h1 className="mb-10 text-4xl font-bold leading-[1.05] tracking-tight sm:text-5xl">
-            {opportunity.project.name}
+            {opportunity.projectName}
           </h1>
 
           <div className="relative">
@@ -98,7 +241,7 @@ export default async function OpportunityDetailPage({
             )}
             <div className="relative">
               <div className="font-display text-muted-foreground mb-1.5 text-xs font-bold tracking-[0.16em]">
-                SIGNAL STRENGTH
+                SCORE
               </div>
               <div className="flex items-end gap-6">
                 {opportunity.score === null ? (
@@ -148,14 +291,12 @@ export default async function OpportunityDetailPage({
           </div>
 
           {opportunity.officialActionUrl && (
-            <a
+            <ExternalLink
               href={opportunity.officialActionUrl}
-              target="_blank"
-              rel="noopener noreferrer"
               className="font-display bg-signal text-signal-foreground mt-8 block rounded-lg px-6 py-3.5 text-center text-sm font-bold tracking-wide hover:opacity-90"
             >
               OFFICIAL ACTION LINK ↗
-            </a>
+            </ExternalLink>
           )}
         </div>
 
@@ -191,17 +332,23 @@ export default async function OpportunityDetailPage({
       </div>
 
       {/* ---------------- risk classification — 2 cols mobile, 3 at md+ ---------------- */}
-      <BracketHeader>RISK CLASSIFICATION</BracketHeader>
-      <div className="border-border bg-card rounded-lg border p-5 sm:p-6">
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-          {RISK_DIMENSIONS.map(({ key, label }) => (
-            <RiskTile key={key} label={label} value={risk ? (risk[key] as RiskLevel) : "UNKNOWN"} />
-          ))}
+      <Section>
+        <BracketHeader>RISK CLASSIFICATION</BracketHeader>
+        <div className="border-border bg-card rounded-lg border p-5 sm:p-6">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+            {RISK_DIMENSIONS.map(({ key, label }) => (
+              <RiskTile
+                key={key}
+                label={label}
+                value={risk ? (risk[key] as RiskLevel) : "UNKNOWN"}
+              />
+            ))}
+          </div>
         </div>
-      </div>
+      </Section>
 
       {/* ---------------- score inputs + evidence share a row at lg+ ---------------- */}
-      <div className="lg:grid lg:grid-cols-2 lg:items-start lg:gap-10">
+      <Section className="lg:grid lg:grid-cols-2 lg:items-start lg:gap-10">
         <div>
           {opportunity.scoreInputs !== null && (
             <>
@@ -225,25 +372,25 @@ export default async function OpportunityDetailPage({
                 {opportunity.evidence.map((item) => (
                   <li
                     key={item.id}
-                    className="border-border border-b pb-4 text-sm last:border-0 last:pb-0"
+                    className={cn("border-border border-b pb-4 last:border-0 last:pb-0", BODY_TEXT)}
                   >
                     <div className="flex items-start justify-between gap-2">
                       <span>{item.claim}</span>
-                      <span className="font-display border-border text-muted-foreground shrink-0 rounded border px-1.5 py-0.5 text-[0.65rem] font-bold">
+                      <span
+                        className={cn(
+                          "font-display border-border text-muted-foreground shrink-0 rounded border px-1.5 py-0.5 font-bold",
+                          LABEL_TEXT,
+                        )}
+                      >
                         {item.evidenceType}
                       </span>
                     </div>
                     <p className="text-muted-foreground mt-1 font-mono text-xs">
-                      {item.source.type}
-                      {item.source.publisher ? ` · ${item.source.publisher}` : ""} ·{" "}
-                      <a
-                        href={item.source.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="hover:underline"
-                      >
-                        {item.source.url}
-                      </a>
+                      {item.sourceType}
+                      {item.sourcePublisher ? ` · ${item.sourcePublisher}` : ""} ·{" "}
+                      <ExternalLink href={item.sourceUrl} className="hover:underline">
+                        {item.sourceUrl}
+                      </ExternalLink>
                     </p>
                   </li>
                 ))}
@@ -251,7 +398,7 @@ export default async function OpportunityDetailPage({
             )}
           </div>
         </div>
-      </div>
+      </Section>
     </main>
   );
 }
@@ -290,8 +437,8 @@ function RiskTile({ label, value }: { label: string; value: RiskLevel }) {
         known ? colorClass : "border-unknown/40 border-dashed opacity-50",
       )}
     >
-      <span className="font-display text-muted-foreground text-xs">{label}</span>
-      <span className={cn("font-display text-xs font-bold", known ? "" : "text-unknown")}>
+      <span className={cn("font-display text-muted-foreground", LABEL_TEXT)}>{label}</span>
+      <span className={cn("font-display font-bold", LABEL_TEXT, known ? "" : "text-unknown")}>
         {known ? value : "UNK"}
       </span>
     </div>
@@ -301,7 +448,7 @@ function RiskTile({ label, value }: { label: string; value: RiskLevel }) {
 function Field({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
     <div>
-      <dt className="font-display text-muted-foreground text-[0.65rem] font-bold tracking-wide">
+      <dt className={cn("font-display text-muted-foreground font-bold tracking-wide", LABEL_TEXT)}>
         {label}
       </dt>
       <dd className={mono ? "mt-0.5 break-all font-mono text-xs" : "mt-0.5 text-sm"}>{value}</dd>

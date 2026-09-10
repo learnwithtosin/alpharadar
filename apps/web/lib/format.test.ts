@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatMonthYear,
   FRESHNESS_THRESHOLD_MS,
   formatAbsolute,
   formatAge,
@@ -34,6 +35,12 @@ describe("formatAge", () => {
 describe("formatAbsolute", () => {
   it("renders UTC date and minute, explicitly labeled UTC", () => {
     expect(formatAbsolute(new Date("2026-09-09T09:22:58.123Z"))).toBe("2026-09-09 09:22 UTC");
+  });
+});
+
+describe("formatMonthYear", () => {
+  it("renders month name and year, UTC", () => {
+    expect(formatMonthYear(new Date("2026-09-01T00:30:00Z"))).toBe("September 2026");
   });
 });
 

@@ -606,12 +606,22 @@ model Participation {
 /// only after a run's writes commit, or a mid-run crash silently skips a
 /// block range forever.
 model IngestionCheckpoint {
-  id              String              @id @default(cuid())
-  chain           String              @unique
-  lastBlockNumber BigInt
-  lastRunAt       DateTime?
-  lastRunStatus   IngestionRunStatus?
-  lastRunError    String?
-  createdAt       DateTime            @default(now())
-  updatedAt       DateTime            @updatedAt
+  id                 String              @id @default(cuid())
+  chain              String              @unique
+  lastBlockNumber    BigInt
+  lastRunAt          DateTime?
+  lastRunStatus      IngestionRunStatus?
+  lastRunError       String?
+  /// Additive, for apps/web's real capability metrics (landing page) —
+  /// not derivable from lastBlockNumber alone, since getNextRange
+  /// permanently skips (not backfills) any gap wider than
+  /// MAX_BLOCKS_PER_RUN, so (current - initial lastBlockNumber) would
+  /// overstate blocks actually scanned whenever a skip has happened.
+  /// Incremented atomically in checkpoint.ts's advanceCheckpoint by the
+  /// exact size of each successful run's range — a real running total,
+  /// not reconstructed. Starts at 0 from whenever this column was added;
+  /// does not retroactively account for blocks scanned before it existed.
+  totalBlocksScanned BigInt              @default(0)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
 }

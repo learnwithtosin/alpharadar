@@ -1,5 +1,4 @@
-import type { IngestionRunStatus, PrismaClient } from "@alpharadar/database";
-import { withDbRetry } from "./db-retry.js";
+import { withDbRetry, type IngestionRunStatus, type PrismaClient } from "@alpharadar/database";
 
 export interface CheckpointRange {
   fromBlock: bigint;
@@ -68,11 +67,20 @@ export async function getNextRange(
  * design, specifically to make that mistake impossible to make from inside
  * the pipeline. See docs/spec/09-INFRASTRUCTURE-DECISION.md §11 point 3
  * and §7.
+ *
+ * blocksScanned is the exact size of [fromBlock, toBlock] for this run and
+ * is added to totalBlocksScanned as a real running total — NOT reconstructed
+ * from (toBlock - initial lastBlockNumber), which would overstate the true
+ * count whenever getNextRange has permanently skipped a gap (see that
+ * function's doc comment). Used atomically ({ increment }) so concurrent or
+ * retried calls can't clobber each other. This total powers apps/web's
+ * landing-page capability metrics.
  */
 export async function advanceCheckpoint(
   prisma: Pick<PrismaClient, "ingestionCheckpoint">,
   chain: string,
   toBlock: bigint,
+  blocksScanned: bigint,
 ): Promise<void> {
   await withDbRetry("advanceCheckpoint", () =>
     prisma.ingestionCheckpoint.upsert({
@@ -83,12 +91,14 @@ export async function advanceCheckpoint(
         lastRunAt: new Date(),
         lastRunStatus: "SUCCESS",
         lastRunError: null,
+        totalBlocksScanned: blocksScanned,
       },
       update: {
         lastBlockNumber: toBlock,
         lastRunAt: new Date(),
         lastRunStatus: "SUCCESS",
         lastRunError: null,
+        totalBlocksScanned: { increment: blocksScanned },
       },
     }),
   );

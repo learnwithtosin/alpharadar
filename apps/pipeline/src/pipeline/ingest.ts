@@ -1,7 +1,6 @@
 import type { ChainAdapter } from "@alpharadar/chain";
-import type { PrismaClient } from "@alpharadar/database";
+import { withDbRetry, type PrismaClient } from "@alpharadar/database";
 import type { Address, Hex } from "viem";
-import { withDbRetry } from "../db-retry.js";
 import { log } from "../logger.js";
 
 /**

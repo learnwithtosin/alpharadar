@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Space_Grotesk } from "next/font/google";
 import { AppHeader } from "@/components/app-header";
+import { Footer } from "@/components/footer";
 import "./globals.css";
 
 // next/font self-hosts at build time — no runtime request to Google's
@@ -43,9 +44,10 @@ export default function RootLayout({
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>
-      <body className="bg-background text-foreground font-display min-h-screen antialiased">
+      <body className="bg-background text-foreground font-display flex min-h-screen flex-col antialiased">
         <AppHeader />
-        {children}
+        <div className="flex-1">{children}</div>
+        <Footer />
       </body>
     </html>
   );

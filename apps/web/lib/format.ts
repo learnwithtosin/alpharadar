@@ -43,3 +43,12 @@ export const SCAN_FRESHNESS_THRESHOLD_MS = 10 * MINUTE_MS;
 export function isFresh(date: Date, thresholdMs: number, now: Date = new Date()): boolean {
   return now.getTime() - date.getTime() < thresholdMs;
 }
+
+/**
+ * "Month YYYY" for the landing page's "Live since" line — always derived
+ * from a real IngestionCheckpoint.createdAt (the earliest chain's first
+ * successful run), never a hardcoded string.
+ */
+export function formatMonthYear(date: Date): string {
+  return date.toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+}
