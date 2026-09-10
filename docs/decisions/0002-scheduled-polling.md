@@ -1,9 +1,19 @@
 # 0002 — Scheduled polling instead of persistent streaming (accepted latency trade-off)
 
-Status: Accepted
+Status: Accepted and deployed
 Date: 2026-09-07
 Supersedes: 02 §9's implied persistent ingestion, 04 Phase 3's "WebSocket/log subscription" acceptance criterion, 02 §22's "Redis health" observability requirement
 Authoritative source: 09-INFRASTRUCTURE-DECISION.md §3, §11
+
+> DEPLOYED — 2026-09-10. `.github/workflows/pipeline.yml` now exists:
+> cron `*/5 * * * *` (5 minutes, matching MAX_BLOCKS_PER_RUN's sizing —
+> see decision 0011 — not the 10 minutes this doc's own text below still
+> describes as the original spec value; docs/spec/09-INFRASTRUCTURE-DECISION.md
+> §8 has been corrected the same way), plus `workflow_dispatch` for a
+> manual trigger. Secrets live in the repo's GitHub Actions secrets, never
+> in the workflow file — this repo is public. Everything below was
+> written before deployment, as the reasoning for this shape; it still
+> stands.
 
 ## Decision
 

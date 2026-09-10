@@ -1,0 +1,81 @@
+name: Pipeline
+
+# Scheduled poller — docs/decisions/0002-scheduled-polling.md. Runs
+# apps/pipeline once, end to end, then exits; GitHub Actions cron is the
+# entire "always-on" story for the MVP (docs/spec/09-INFRASTRUCTURE-DECISION.md
+# §3, §8). Cadence is 5 minutes, not 10 — MAX_BLOCKS_PER_RUN=500 was sized
+# against a 5-minute window (docs/decisions/0011-discovery-method-switch.md);
+# widening this without re-deriving that budget would silently skip more
+# chain history than the design accounts for. Deliberately thin per 09 §11:
+# this moves to an always-on host later, and nothing in apps/pipeline itself
+# assumes GitHub Actions — this file is scheduling only.
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+# A run can occasionally exceed 5 minutes (docs/decisions/0011's own
+# measured worst case: 227.5s scan + overhead). cancel-in-progress: false
+# means a run already in flight is never killed mid-write by the next
+# scheduled trigger — the new trigger queues instead, exactly the
+# "GitHub Actions concurrency guard" decision 0011 names: "an overrun no
+# longer risks a checkpoint race, only a skipped/delayed cycle." Killing
+# an in-progress run (cancel-in-progress: true) would be worse here, not
+# safer — checkpoint.ts only advances after every write for a range
+# commits, so a killed run just wastes its own work, but racing two runs
+# against the same range is the thing this guard exists to prevent.
+concurrency:
+  group: pipeline-poll
+  cancel-in-progress: false
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    # cancel-in-progress: false means an overrunning run queues the next
+    # trigger rather than being killed by it — with no bound at all, a
+    # genuinely hung run (not just a slow one) would occupy that queue
+    # slot indefinitely and the pipeline would silently stop advancing.
+    # 8 minutes is roughly double decision 0011's own worst-case measured
+    # run time (227.5s, ~3.8min, at the pessimistic 10-candidate bound) —
+    # enough slack for a real but merely-slow run, tight enough that a
+    # hung one gets killed and the queue freed within one missed cycle,
+    # not several.
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter @alpharadar/database db:generate
+
+      - name: Run pipeline
+        # No continue-on-error, no `|| true` — apps/pipeline/src/index.ts's
+        # own top-level handler (main().catch(...) => process.exit(1)) is
+        # what makes a real failure surface here as a non-zero exit, which
+        # is what turns this step red and fails the whole run. A silent
+        # failure here means the poller is dead with nobody told — this
+        # step failing loudly, visibly, in the Actions tab (and in GitHub's
+        # own default failure-notification email for scheduled runs) is
+        # the entire alerting mechanism for that, on purpose — nothing
+        # further was built because 09's stack is $0/month and a second
+        # notification channel isn't free.
+        run: pnpm pipeline
+        env:
+          NODE_ENV: production
+          RUN_MODE: poll
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+          ROBINHOOD_RPC_URL: ${{ secrets.ROBINHOOD_RPC_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          AUTH_SECRET: ${{ secrets.AUTH_SECRET }}

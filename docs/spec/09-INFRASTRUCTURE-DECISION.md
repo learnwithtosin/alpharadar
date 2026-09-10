@@ -142,13 +142,22 @@ Written down now so they are not surprises later.
 - **Supabase free is 500 MB.** `WalletActivity` and `OpportunityEvent` grow
   fastest. Add a retention job before they matter.
 - **GitHub Actions cron is best-effort** and can be delayed under platform
-  load. Schedule for every 10 minutes and expect some runs at 12–15.
+  load. Schedule for every **5 minutes** and expect some runs at 7–10.
 
   > UPDATED — see docs/decisions/0008-erc20-launch-detection.md. Raised
   > MAX_BLOCKS_PER_RUN from 150 to 600 (a real run measured 150
   > blocks/58s; ~600 fits a ~4-minute budget at that rate) to widen
-  > discovery coverage. Schedule for every **5** minutes, not 10, so the
-  > cron cadence keeps pace with the wider per-run window.
+  > discovery coverage, and moved the cadence from the originally-specified
+  > 10 minutes down to 5, so the cron cadence keeps pace with the wider
+  > per-run window.
+  >
+  > UPDATED AGAIN — see docs/decisions/0011-discovery-method-switch.md.
+  > MAX_BLOCKS_PER_RUN is 500, not 600 — a full whole-run budget (not just
+  > scan time) sized against the real measured 305ms/block rate and a
+  > pessimistic 10-candidate post-scan cost landed on 500 as the value
+  > that clears the 300s cron ceiling with real margin. The cadence stays
+  > 5 minutes; this changes how much of that fixed window one run uses,
+  > not how often it runs.
 - **Supabase + Prisma needs two connection strings** — the pooled connection
   (pgBouncer) for the application and a direct connection for migrations.
   Getting this wrong produces confusing migration failures.
