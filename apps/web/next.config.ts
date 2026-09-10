@@ -20,6 +20,26 @@ const nextConfig: NextConfig = {
     };
     return config;
   },
+  // Belt-and-suspenders for the same problem extensionAlias above works
+  // around, one layer deeper: Next's output file tracing decides what a
+  // deployed serverless function actually ships by walking real
+  // `import`/`require` statements. Prisma's native query engine
+  // (packages/database/generated/client/libquery_engine-*.so.node — see
+  // schema.prisma's generator comment) is never `require()`d; Prisma's own
+  // runtime finds it via a computed filesystem path at query time. That
+  // makes it invisible to the trace regardless of where it lives, so the
+  // "Prisma Client could not locate the Query Engine" error persisted even
+  // after moving the generator's `output` out of pnpm's hoisted store into
+  // this real, traceable path — the path became inspectable, but nothing
+  // was actually asking to inspect it. This is Next.js's own documented
+  // fix, and Prisma's own linked fix for this exact error on Next.js
+  // (https://pris.ly/d/engine-not-found-nextjs): explicitly tell the
+  // tracer to include it. `/**` (every route) because Prisma is reachable
+  // from every page via AppHeader in the root layout, not just the pages
+  // that query it directly.
+  outputFileTracingIncludes: {
+    "/**": ["../../packages/database/generated/client/*.so.node"],
+  },
 };
 
 export default nextConfig;

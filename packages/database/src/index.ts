@@ -2,7 +2,14 @@
 // DATABASE_URL check below runs. Every consumer of this module gets this
 // for free — no per-app dotenv wiring required.
 import "@alpharadar/config";
-import { PrismaClient } from "@prisma/client";
+// Imported from the generated client's own path, not the "@prisma/client"
+// package — see schema.prisma's generator comment and
+// docs/decisions/0023-vercel-missing-engine-and-web-retry-budget.md. The
+// default output location is hoisted into pnpm's virtual store, which
+// Next.js's build-time file tracer does not reliably walk; this custom
+// path is a real, fixed directory inside this package that
+// outputFileTracingIncludes (apps/web/next.config.ts) can name explicitly.
+import { PrismaClient } from "../generated/client/index.js";
 
 /**
  * PrismaClient itself only reads DATABASE_URL lazily, at the first query —
@@ -34,5 +41,5 @@ if (process.env.NODE_ENV !== "production") {
   globalForPrisma.prisma = prisma;
 }
 
-export * from "@prisma/client";
+export * from "../generated/client/index.js";
 export { withDbRetry } from "./db-retry.js";

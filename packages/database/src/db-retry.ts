@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+import { Prisma } from "../generated/client/index.js";
 
 /**
  * Two budgets, for two fundamentally different callers — conflating them

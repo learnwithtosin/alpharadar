@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+import { Prisma } from "../generated/client/index.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { withDbRetry } from "./db-retry.js";
 
