@@ -39,7 +39,7 @@ describe("withDbRetry", () => {
       .map(([line]) => JSON.parse(line as string) as Record<string, unknown>)
       .filter((e) => e.event === "db.retry");
     expect(retries).toHaveLength(2);
-    expect(retries[0]).toMatchObject({ operation: "op", attempt: 1, maxAttempts: 4 });
+    expect(retries[0]).toMatchObject({ operation: "op", attempt: 1, maxAttempts: 20 });
     logSpy.mockRestore();
   });
 
@@ -53,7 +53,7 @@ describe("withDbRetry", () => {
     await vi.runAllTimersAsync();
     await assertion;
 
-    expect(fn).toHaveBeenCalledTimes(4);
+    expect(fn).toHaveBeenCalledTimes(20);
     logSpy.mockRestore();
   });
 

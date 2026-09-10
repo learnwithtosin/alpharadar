@@ -1,8 +1,40 @@
 import { Prisma } from "@prisma/client";
 
-const DB_RETRY_MAX_ATTEMPTS = 4;
+/**
+ * Sized from two real, directly-measured outages against the transaction
+ * pooler (DATABASE_URL, port 6543) on 2026-09-10, not a guess — the same
+ * methodology packages/telegram/src/client.ts's retry budget was sized
+ * from ("confirmed live... always recovering within a few minutes").
+ * Probed the pooler once/sec via the real Prisma client and logged every
+ * state transition:
+ *
+ *   Outage 1: 10.92s total, 2 consecutive failures.
+ *   Outage 2: 74.17s total, 10 consecutive failures.
+ *
+ * In both, each failed connection attempt took a strikingly uniform
+ * ~5.00s to fail (5001-5063ms every time) — this is Prisma's own default
+ * `connect_timeout` for the PostgreSQL connector elapsing while trying to
+ * open a *new* connection to the pooler, not a fast TCP-level reject.
+ * That ~5s-per-attempt cost is fixed and dominates the retry budget's
+ * math far more than the backoff sleep between attempts does.
+ *
+ * The old budget (4 attempts, 3s backoff cap) worked out to roughly
+ * 4 * 5s + (300+600+1200)ms ≈ 22s worst case — short of *either* observed
+ * outage, which is exactly the failure this was sized to fix: retries
+ * exhausting while the outage was still ongoing. Sized up to comfortably
+ * clear the longer (74.17s) observed outage with margin, the same way
+ * Telegram's budget was sized past its own observed worst case rather
+ * than exactly to it — a single outage isn't a hard ceiling:
+ *
+ *   20 attempts, 300ms base doubling to a 5000ms cap ≈
+ *   20 * 5s (attempt cost) + ~79.3s (backoff sum, pre-jitter) ≈ 179s (~3min).
+ *
+ * Re-measure and re-size if a future outage exceeds this — the numbers
+ * above are what's actually been observed, not a permanent ceiling.
+ */
+const DB_RETRY_MAX_ATTEMPTS = 20;
 const DB_RETRY_BASE_DELAY_MS = 300;
-const DB_RETRY_MAX_DELAY_MS = 3000;
+const DB_RETRY_MAX_DELAY_MS = 5000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

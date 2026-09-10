@@ -242,8 +242,8 @@ describe("checkpoint DB retry — connection-level failures only", () => {
     expect(findUnique).toHaveBeenCalledTimes(3);
     const retries = loggedRetries(logSpy);
     expect(retries).toHaveLength(2);
-    expect(retries[0]).toMatchObject({ operation: "getNextRange", attempt: 1, maxAttempts: 4 });
-    expect(retries[1]).toMatchObject({ operation: "getNextRange", attempt: 2, maxAttempts: 4 });
+    expect(retries[0]).toMatchObject({ operation: "getNextRange", attempt: 1, maxAttempts: 20 });
+    expect(retries[1]).toMatchObject({ operation: "getNextRange", attempt: 2, maxAttempts: 20 });
     logSpy.mockRestore();
   });
 
@@ -258,7 +258,7 @@ describe("checkpoint DB retry — connection-level failures only", () => {
     await vi.runAllTimersAsync();
     await assertion;
 
-    expect(findUnique).toHaveBeenCalledTimes(4);
+    expect(findUnique).toHaveBeenCalledTimes(20);
     logSpy.mockRestore();
   });
 

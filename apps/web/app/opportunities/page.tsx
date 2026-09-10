@@ -15,7 +15,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { scoreClassName } from "@/lib/domain-colors";
-import { formatAge, FRESHNESS_THRESHOLD_MS, isFresh } from "@/lib/format";
+import { formatAbsolute, formatAge, FRESHNESS_THRESHOLD_MS, isFresh } from "@/lib/format";
 
 // Detection never stops (a 5-minute cron), but a list that's up to 60s
 // stale is fine against a 5-minute cadence — see the caching comment
@@ -89,8 +89,31 @@ interface CachedOpportunityRow {
   detectedAt: string;
 }
 
+/**
+ * `unstable_cache` already does the resilient thing on a failed
+ * revalidation — confirmed by reading Next.js's own implementation
+ * (server/web/spec-extension/unstable-cache.js), not assumed: when a
+ * stale entry's background revalidation throws, Next catches it
+ * internally, logs it, and resolves with the *previous* cached value
+ * instead of propagating the error — a request never sees that failure,
+ * cached or not. So this file doesn't need its own fallback wrapper.
+ *
+ * What that mechanism doesn't give the UI is any signal that a fallback
+ * just happened — a revalidation-failure fallback and an ordinary
+ * within-window cache hit are indistinguishable from the outside. Since
+ * a live pooler outage can leave the "60s-stale" list serving data far
+ * older than 60s for as long as the outage lasts, `fetchedAt` is tracked
+ * explicitly (set at the moment of the last *successful* fetch, inside
+ * the cached function) so the page can say so honestly rather than
+ * silently presenting old data as current.
+ */
+interface CachedOpportunities {
+  fetchedAt: string;
+  rows: CachedOpportunityRow[];
+}
+
 const getCachedOpportunities = unstable_cache(
-  async (): Promise<CachedOpportunityRow[]> => {
+  async (): Promise<CachedOpportunities> => {
     const opportunities = await withDbRetry("OpportunitiesPage.opportunities", () =>
       prisma.opportunity.findMany({
         // isTestData rows are dev-tooling fixtures (apps/pipeline/src/dev/
@@ -105,21 +128,35 @@ const getCachedOpportunities = unstable_cache(
         },
       }),
     );
-    return opportunities.map((o) => ({
-      id: o.id,
-      projectName: o.project.name,
-      chain: o.chain,
-      type: o.type,
-      status: o.status,
-      score: o.score,
-      overallRisk: o.riskAssessments[0]?.overallRisk ?? "UNKNOWN",
-      urgency: o.urgency,
-      detectedAt: o.detectedAt.toISOString(),
-    }));
+    return {
+      fetchedAt: new Date().toISOString(),
+      rows: opportunities.map((o) => ({
+        id: o.id,
+        projectName: o.project.name,
+        chain: o.chain,
+        type: o.type,
+        status: o.status,
+        score: o.score,
+        overallRisk: o.riskAssessments[0]?.overallRisk ?? "UNKNOWN",
+        urgency: o.urgency,
+        detectedAt: o.detectedAt.toISOString(),
+      })),
+    };
   },
   ["opportunities-list"],
   { revalidate: 60 },
 );
+
+/**
+ * 60s is the *target* revalidation window, not a guarantee — during a
+ * live outage, every revalidation attempt fails and Next keeps serving
+ * the last successful fetch (see above) for as long as that lasts. Well
+ * beyond the 60s target (3x, with margin for a request landing just
+ * before a revalidation would have fired) is treated as "this is
+ * probably a failure fallback, not ordinary staleness," and disclosed
+ * rather than presented as current.
+ */
+const STALE_NOTE_THRESHOLD_MS = 180_000;
 
 type OpportunityRow = Omit<CachedOpportunityRow, "detectedAt"> & { detectedAt: Date };
 
@@ -135,7 +172,9 @@ function compareLive(a: OpportunityRow, b: OpportunityRow): number {
 
 export default async function OpportunitiesPage() {
   const cached = await getCachedOpportunities();
-  const opportunities: OpportunityRow[] = cached.map((o) => ({
+  const fetchedAt = new Date(cached.fetchedAt);
+  const isStale = Date.now() - fetchedAt.getTime() > STALE_NOTE_THRESHOLD_MS;
+  const opportunities: OpportunityRow[] = cached.rows.map((o) => ({
     ...o,
     detectedAt: new Date(o.detectedAt),
   }));
@@ -156,6 +195,11 @@ export default async function OpportunitiesPage() {
           {closed.length > 0
             ? ` · ${closed.length.toLocaleString()} closed opportunit${closed.length === 1 ? "y" : "ies"}`
             : ""}
+          {isStale && (
+            <span className="text-warn ml-2" title={formatAbsolute(fetchedAt)}>
+              — data delayed, last refreshed {formatAge(fetchedAt)} ago
+            </span>
+          )}
         </p>
       </div>
 
