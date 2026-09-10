@@ -27,6 +27,18 @@ function optional(schema: z.ZodString) {
  */
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
+  // Correct as of this default: apps/web has no deployment yet (that's a
+  // later step), so there is no real public URL to put here — inventing
+  // one would be a fabricated URL, not a fix. localhost:3000 matches
+  // Next.js's own dev-server default (apps/web's `pnpm dev`), which is
+  // genuinely where this resolves right now. This is exactly why
+  // alert.ts's inline "Open on AlphaRadar" button is currently omitted,
+  // not broken — Telegram won't accept a localhost button URL
+  // (packages/telegram's looksLikePubliclyReachableHttpsUrl correctly
+  // says no) — the message still sends without it. Once apps/web is
+  // actually deployed, set this to that real https URL and the button
+  // starts appearing on its own; nothing else needs to change. See
+  // docs/decisions/0013-web-opportunities-pages.md.
   WEB_URL: z.string().url().default("http://localhost:3000"),
   AUTH_SECRET: optional(z.string().min(1)),
 

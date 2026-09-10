@@ -30,7 +30,10 @@ const config: Config = {
           foreground: "hsl(var(--secondary-foreground))",
         },
         destructive: {
-          DEFAULT: "hsl(var(--destructive))",
+          // <alpha-value> placeholder (not a bare hsl(var(..))) so
+          // opacity modifiers work — bg-destructive/10, border-destructive/50 —
+          // needed now that this token is reused for HIGH/CRITICAL risk tiles.
+          DEFAULT: "hsl(var(--destructive) / <alpha-value>)",
           foreground: "hsl(var(--destructive-foreground))",
         },
         muted: {
@@ -49,6 +52,18 @@ const config: Config = {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        // AlphaRadar's own accent (0014) — distinct from shadcn's `accent`
+        // (a plain hover/highlight neutral, untouched above). Reserved for
+        // a few big, meaningful moments: the score, the CTA, LOW risk.
+        signal: {
+          DEFAULT: "hsl(var(--signal) / <alpha-value>)",
+          foreground: "hsl(var(--signal-foreground))",
+        },
+        warn: "hsl(var(--warn) / <alpha-value>)",
+        unknown: "hsl(var(--unknown) / <alpha-value>)",
+      },
+      fontFamily: {
+        display: ["var(--font-display)", "system-ui", "sans-serif"],
       },
       borderRadius: {
         lg: "var(--radius)",

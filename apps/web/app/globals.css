@@ -2,50 +2,76 @@
 @tailwind components;
 @tailwind utilities;
 
+/* AlphaRadar visual identity — docs/decisions/0013-web-opportunities-pages.md,
+   docs/decisions/0014-web-visual-identity.md. Dark is canonical (the
+   default below); .light is a genuinely separate "blueprint" design,
+   not an inversion of dark's values — see 0014 for why (a lightened
+   phosphor green reads washed out).
+
+   --signal is AlphaRadar's own accent (~hue 168°, electric teal) —
+   deliberately not Robinhood Chain's brand green (~hue 125°, warm
+   lime) — see 0014. It is a DIFFERENT token from shadcn's own
+   --accent (which stays a plain hover/highlight neutral) precisely so
+   the two never collide: --signal is reserved for a handful of big,
+   meaningful moments (the score, the CTA, LOW risk), not spread
+   across chrome the way --accent is. */
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 240 10% 3.9%;
+    --background: 205 30% 97%;
+    --foreground: 210 35% 13%;
     --card: 0 0% 100%;
-    --card-foreground: 240 10% 3.9%;
+    --card-foreground: 210 35% 13%;
     --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 3.9%;
-    --primary: 240 5.9% 10%;
-    --primary-foreground: 0 0% 98%;
-    --secondary: 240 4.8% 95.9%;
-    --secondary-foreground: 240 5.9% 10%;
-    --muted: 240 4.8% 95.9%;
-    --muted-foreground: 240 3.8% 46.1%;
-    --accent: 240 4.8% 95.9%;
-    --accent-foreground: 240 5.9% 10%;
-    --destructive: 0 84.2% 60.2%;
+    --popover-foreground: 210 35% 13%;
+    --primary: 210 35% 13%;
+    --primary-foreground: 205 30% 97%;
+    --secondary: 205 20% 93%;
+    --secondary-foreground: 210 35% 13%;
+    --muted: 205 20% 93%;
+    --muted-foreground: 210 15% 42%;
+    --accent: 205 20% 93%;
+    --accent-foreground: 210 35% 13%;
+    --destructive: 0 72% 42%;
     --destructive-foreground: 0 0% 98%;
-    --border: 240 5.9% 90%;
-    --input: 240 5.9% 90%;
-    --ring: 240 5.9% 10%;
+    --border: 205 22% 87%;
+    --input: 205 22% 87%;
+    --ring: 168 75% 28%;
     --radius: 0.5rem;
+
+    /* Signal-carrying tokens — score/risk color, contrast-checked per theme. */
+    --signal: 168 75% 28%;
+    --signal-foreground: 0 0% 100%;
+    --warn: 28 90% 32%;
+    --unknown: 210 10% 50%;
+    --grid-line: 210 60% 50%;
   }
 
   .dark {
-    --background: 240 10% 3.9%;
-    --foreground: 0 0% 98%;
-    --card: 240 10% 3.9%;
-    --card-foreground: 0 0% 98%;
-    --popover: 240 10% 3.9%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 240 5.9% 10%;
-    --secondary: 240 3.7% 15.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 240 3.7% 15.9%;
-    --muted-foreground: 240 5% 64.9%;
-    --accent: 240 3.7% 15.9%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
+    --background: 160 20% 5%;
+    --foreground: 150 15% 94%;
+    --card: 165 15% 8%;
+    --card-foreground: 150 15% 94%;
+    --popover: 165 15% 8%;
+    --popover-foreground: 150 15% 94%;
+    --primary: 150 15% 94%;
+    --primary-foreground: 160 20% 5%;
+    --secondary: 165 15% 15%;
+    --secondary-foreground: 150 15% 94%;
+    --muted: 165 15% 13%;
+    --muted-foreground: 160 8% 55%;
+    --accent: 165 15% 15%;
+    --accent-foreground: 150 15% 94%;
+    --destructive: 0 78% 60%;
     --destructive-foreground: 0 0% 98%;
-    --border: 240 3.7% 15.9%;
-    --input: 240 3.7% 15.9%;
-    --ring: 240 4.9% 83.9%;
+    --border: 165 15% 18%;
+    --input: 165 15% 18%;
+    --ring: 168 85% 58%;
+
+    --signal: 168 85% 58%;
+    --signal-foreground: 160 20% 5%;
+    --warn: 40 95% 60%;
+    --unknown: 210 10% 48%;
+    --grid-line: 168 60% 40%;
   }
 }
 
@@ -55,5 +81,67 @@
   }
   body {
     @apply bg-background text-foreground;
+  }
+}
+
+/* Blueprint grid texture — light theme only, page background, never
+   behind text (applied to body, panels sit opaque on top of it). */
+.light body {
+  background-image:
+    linear-gradient(hsl(var(--grid-line) / 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, hsl(var(--grid-line) / 0.05) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+@layer utilities {
+  .font-display {
+    font-family:
+      var(--font-display),
+      system-ui,
+      -apple-system,
+      "Segoe UI",
+      sans-serif;
+  }
+}
+
+/* Freshness pulse — animates only while .is-fresh is present (server-
+   decided from real detectedAt age); a stale contact renders the same
+   dot markup with no animation class at all, not a paused one. */
+@keyframes signal-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.7);
+  }
+}
+.is-fresh {
+  animation: signal-pulse 2s ease-in-out infinite;
+}
+
+/* Score entrance — subtle, fast, never hides content (starts at 0.6
+   opacity, not 0) and skipped outright for reduced-motion users. */
+@keyframes score-in {
+  from {
+    opacity: 0.6;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-score-in {
+  animation: score-in 0.35s ease-out both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-score-in {
+    animation: none;
+  }
+  .is-fresh {
+    animation: none;
   }
 }
