@@ -96,15 +96,18 @@ interface CachedOpportunityDetail {
 
 const getCachedOpportunityDetail = unstable_cache(
   async (id: string): Promise<CachedOpportunityDetail | null> => {
-    const opportunity = await withDbRetry("OpportunityDetailPage.opportunity", () =>
-      prisma.opportunity.findUnique({
-        where: { id },
-        include: {
-          project: true,
-          riskAssessments: { orderBy: { createdAt: "desc" }, take: 1 },
-          evidence: { include: { source: true }, orderBy: { createdAt: "desc" } },
-        },
-      }),
+    const opportunity = await withDbRetry(
+      "OpportunityDetailPage.opportunity",
+      () =>
+        prisma.opportunity.findUnique({
+          where: { id },
+          include: {
+            project: true,
+            riskAssessments: { orderBy: { createdAt: "desc" }, take: 1 },
+            evidence: { include: { source: true }, orderBy: { createdAt: "desc" } },
+          },
+        }),
+      "request",
     );
     if (!opportunity) return null;
     const risk = opportunity.riskAssessments[0] ?? null;
@@ -155,8 +158,10 @@ interface CachedContract {
 
 const getCachedContract = unstable_cache(
   async (chain: string, address: string): Promise<CachedContract | null> => {
-    const contract = await withDbRetry("OpportunityDetailPage.contract", () =>
-      prisma.contract.findUnique({ where: { chain_address: { chain, address } } }),
+    const contract = await withDbRetry(
+      "OpportunityDetailPage.contract",
+      () => prisma.contract.findUnique({ where: { chain_address: { chain, address } } }),
+      "request",
     );
     if (!contract) return null;
     return {

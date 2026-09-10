@@ -14,8 +14,23 @@
 // mirror packages/types/src/*.ts. Prisma's schema DSL cannot import those
 // definitions, so the two must be kept in sync by hand.
 
+// "native" generates the engine matching whatever OS actually runs
+// `prisma generate` (this machine for local dev; Vercel's own build
+// container for the Vercel build step) — without it, only the explicit
+// targets below would be generated, breaking local dev/CI on a non-RHEL
+// machine. "rhel-openssl-3.0.x" is Prisma's own documented target for
+// Vercel's Node.js serverless runtime (Amazon-Linux-2023-based Lambda,
+// glibc + OpenSSL 3.0 — confirmed against @prisma/get-platform's own
+// known-platform list, since this sandbox has no live web access to
+// Prisma's docs to check directly). Without it, `prisma generate`'s
+// build-time output never contains an engine binary the deployed
+// runtime can actually load — "Prisma Client could not locate the Query
+// Engine" is exactly that: a missing binary, not a connection problem,
+// and no amount of retrying fixes it. See
+// docs/decisions/0023-vercel-missing-engine-and-web-retry-budget.md.
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 // Supabase requires two connection strings: DATABASE_URL is the pooled

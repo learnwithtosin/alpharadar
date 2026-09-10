@@ -114,19 +114,22 @@ interface CachedOpportunities {
 
 const getCachedOpportunities = unstable_cache(
   async (): Promise<CachedOpportunities> => {
-    const opportunities = await withDbRetry("OpportunitiesPage.opportunities", () =>
-      prisma.opportunity.findMany({
-        // isTestData rows are dev-tooling fixtures (apps/pipeline/src/dev/
-        // seed-test-opportunity.ts) — never a real detection. Excluded from
-        // this listing; still reachable directly at /opportunities/[id] (the
-        // Telegram alert for one links straight there).
-        where: { isTestData: false },
-        orderBy: { detectedAt: "desc" },
-        include: {
-          project: true,
-          riskAssessments: { orderBy: { createdAt: "desc" }, take: 1 },
-        },
-      }),
+    const opportunities = await withDbRetry(
+      "OpportunitiesPage.opportunities",
+      () =>
+        prisma.opportunity.findMany({
+          // isTestData rows are dev-tooling fixtures (apps/pipeline/src/dev/
+          // seed-test-opportunity.ts) — never a real detection. Excluded from
+          // this listing; still reachable directly at /opportunities/[id] (the
+          // Telegram alert for one links straight there).
+          where: { isTestData: false },
+          orderBy: { detectedAt: "desc" },
+          include: {
+            project: true,
+            riskAssessments: { orderBy: { createdAt: "desc" }, take: 1 },
+          },
+        }),
+      "request",
     );
     return {
       fetchedAt: new Date().toISOString(),

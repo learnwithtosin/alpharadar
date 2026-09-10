@@ -132,7 +132,9 @@ function ScanIndicatorSkeleton() {
 }
 
 function fetchCheckpoint() {
-  return withDbRetry("AppHeader.checkpoint", () =>
-    prisma.ingestionCheckpoint.findFirst({ orderBy: { updatedAt: "desc" } }),
+  return withDbRetry(
+    "AppHeader.checkpoint",
+    () => prisma.ingestionCheckpoint.findFirst({ orderBy: { updatedAt: "desc" } }),
+    "request",
   );
 }

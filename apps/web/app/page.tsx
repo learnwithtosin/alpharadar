@@ -116,8 +116,10 @@ interface CachedCheckpoint {
 
 const getCachedCheckpoints = unstable_cache(
   async (): Promise<CachedCheckpoint[]> => {
-    const checkpoints = await withDbRetry("LandingPage.checkpoints", () =>
-      prisma.ingestionCheckpoint.findMany({ orderBy: { updatedAt: "desc" } }),
+    const checkpoints = await withDbRetry(
+      "LandingPage.checkpoints",
+      () => prisma.ingestionCheckpoint.findMany({ orderBy: { updatedAt: "desc" } }),
+      "request",
     );
     return checkpoints.map((c) => ({
       chain: c.chain,
@@ -143,7 +145,7 @@ async function fetchCheckpoints() {
 }
 
 const getCachedContractCount = unstable_cache(
-  () => withDbRetry("LandingPage.contractCount", () => prisma.contract.count()),
+  () => withDbRetry("LandingPage.contractCount", () => prisma.contract.count(), "request"),
   ["landing-contract-count"],
   { revalidate: 60 },
 );

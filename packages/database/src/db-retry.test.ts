@@ -10,6 +10,20 @@ function connectionError(): Prisma.PrismaClientInitializationError {
   );
 }
 
+/**
+ * Same error *class* as connectionError(), deliberately no errorCode —
+ * matches what a missing query-engine binary actually throws (confirmed
+ * live against the real Prisma client, not assumed): "Prisma Client
+ * could not locate the Query Engine for runtime...", errorCode
+ * undefined. Never succeeds on retry, so it must never be retried.
+ */
+function missingEngineError(): Prisma.PrismaClientInitializationError {
+  return new Prisma.PrismaClientInitializationError(
+    'Prisma Client could not locate the Query Engine for runtime "rhel-openssl-3.0.x".',
+    "6.19.3",
+  );
+}
+
 describe("withDbRetry", () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -65,6 +79,13 @@ describe("withDbRetry", () => {
     const fn = vi.fn().mockRejectedValue(queryError);
 
     await expect(withDbRetry("op", fn)).rejects.toThrow("Unique constraint failed");
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry a missing query-engine error — same error class as a connection failure, but never transient", async () => {
+    const fn = vi.fn().mockRejectedValue(missingEngineError());
+
+    await expect(withDbRetry("op", fn)).rejects.toThrow("could not locate the Query Engine");
     expect(fn).toHaveBeenCalledTimes(1);
   });
 });
