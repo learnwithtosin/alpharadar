@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "predev": "pnpm --filter @alpharadar/database db:generate && node scripts/copy-prisma-wasm.mjs",
+    "predev": "pnpm --filter @alpharadar/database db:generate",
     "dev": "next dev",
-    "prebuild": "pnpm --filter @alpharadar/database db:generate && node scripts/copy-prisma-wasm.mjs",
+    "prebuild": "pnpm --filter @alpharadar/database db:generate",
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
