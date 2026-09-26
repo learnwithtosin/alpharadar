@@ -19,5 +19,5 @@ backup). Prices: GeckoTerminal OHLCV; pairs: DexScreener.
 
 The key is read only from the environment and redacted from errors. Every response is cached
 under `./cache/` and never re-fetched; `usage.json` counts requests and estimated Helius credits
-(`python -c "import rpc; print(rpc.usage_report())"`). Credit weights in `rpc.CREDITS` are
-estimates — confirm against the Helius dashboard.
+(`python -c "import rpc; print(rpc.usage_report())"`). Credit weights in `rpc.CREDITS` were
+checked against the Helius dashboard: parsed-transaction API 100/call, standard RPC 1/call.

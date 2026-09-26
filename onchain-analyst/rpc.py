@@ -19,9 +19,10 @@ _pub = itertools.cycle(PUBLIC_RPCS)
 _lock = threading.Lock()
 UA = {"content-type": "application/json", "user-agent": "curl/8.5.0"}
 
-# Approximate Helius credit costs; check the Helius dashboard for the truth.
-CREDITS = {"getSignaturesForAddress": 10, "getTransaction": 10,
-           "enhanced_transactions": 100, "default": 1}
+# Helius credit costs, verified against the dashboard on 2026-09-26:
+# parsed-transaction API = 100/call, standard RPC = 1/call (batched items billed each).
+CREDITS = {"enhanced_transactions": 100, "default": 1}
+PLAN_CREDITS = 1_000_000  # free plan, per cycle (Sep 26 → Oct 26)
 
 USAGE_FILE = os.environ.get("ONCHAIN_USAGE_FILE", "usage.json")
 _usage = {}
@@ -64,7 +65,8 @@ def usage_report(u=None):
     pub = sum(v for k, v in u.items() if not k.startswith("helius:"))
     credits = sum(v * CREDITS.get(m, CREDITS["default"]) for m, v in hel.items())
     return dict(helius_requests=sum(hel.values()), helius_by_method=hel,
-                est_helius_credits=credits, public_requests=pub)
+                helius_credits=credits, pct_of_plan=round(credits / PLAN_CREDITS * 100, 2),
+                public_requests=pub)
 
 
 def _post(url, body, timeout=60):
