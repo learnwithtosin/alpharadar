@@ -117,7 +117,7 @@ def get_transactions(sigs, threads=5):
     params = [[s, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 1}] for s in todo]
     if rpc.using_helius():
         for i in range(0, len(todo), 100):
-            res = rpc.rpc_batch("getTransaction", params[i:i + 100], chunk=50)
+            res = rpc.rpc_batch("getTransaction", params[i:i + 100])
             for s, r in zip(todo[i:i + 100], res):
                 if r is not None:
                     json.dump(r, open(_path("tx", f"{s}.json"), "w"))
@@ -153,6 +153,8 @@ def _public_history(w, since, cap):
 def _deltas_enhanced(tx):
     d = {}
     for a in tx.get("accountData") or []:
+        if a.get("nativeBalanceChange"):
+            k = (a.get("account"), "native"); d[k] = d.get(k, 0) + a["nativeBalanceChange"] / 1e9
         for c in a.get("tokenBalanceChanges") or []:
             raw = c.get("rawTokenAmount") or {}
             k = (c.get("userAccount"), c["mint"])
@@ -162,6 +164,11 @@ def _deltas_enhanced(tx):
 
 def _deltas_raw(t):
     d = {}
+    keys = [k["pubkey"] for k in t["transaction"]["message"]["accountKeys"]]
+    for i, k in enumerate(keys):
+        ch = t["meta"]["postBalances"][i] - t["meta"]["preBalances"][i]
+        if ch:
+            d[(k, "native")] = d.get((k, "native"), 0) + ch / 1e9
     for b in t["meta"]["preTokenBalances"]:
         k = (b.get("owner"), b["mint"]); d[k] = d.get(k, 0) - float(b["uiTokenAmount"]["uiAmount"] or 0)
     for b in t["meta"]["postTokenBalances"]:

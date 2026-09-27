@@ -97,8 +97,8 @@ def rpc(method, params, tries=10, quiet=False):
         url = HELIUS_RPC if use_h else next(_pub)
         prov = "helius" if use_h else "public"
         try:
-            _count(prov, method)
             j = _post(url, {"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+            _count(prov, method)
             if "error" in j:
                 raise RuntimeError(j["error"])
             return j["result"]
@@ -110,9 +110,10 @@ def rpc(method, params, tries=10, quiet=False):
     raise RuntimeError(_redact(last))
 
 
-def rpc_batch(method, param_list, chunk=50, tries=8):
-    """JSON-RPC batch (Helius). Returns results aligned with param_list;
-    None for items that errored. Falls back to single calls if batching is refused."""
+def rpc_batch(method, param_list, chunk=10, tries=8, pause=1.0):
+    """JSON-RPC batch (Helius). Returns results aligned with param_list; None for items
+    that errored. Free plan 429s batches of ~50, so default to 10 per batch with a pause;
+    on a 429 the batch size halves. Only successful responses are counted as usage."""
     out = [None] * len(param_list)
     if not HELIUS_RPC:
         for i, p in enumerate(param_list):
@@ -121,28 +122,30 @@ def rpc_batch(method, param_list, chunk=50, tries=8):
             except Exception:
                 pass
         return out
-    for s in range(0, len(param_list), chunk):
+    s = 0
+    while s < len(param_list):
         part = param_list[s:s + chunk]
         body = [{"jsonrpc": "2.0", "id": s + k, "method": method, "params": p} for k, p in enumerate(part)]
         for i in range(tries):
             try:
-                _count("helius", method, len(part))
                 res = _post(HELIUS_RPC, body, timeout=120)
-                if isinstance(res, dict):  # batch refused → single calls
-                    raise TypeError(_redact(res.get("error", res)))
-                for r in res:
-                    if "result" in r:
-                        out[r["id"]] = r["result"]
+                _count("helius", method, len(part))
+                if isinstance(res, dict):
+                    raise RuntimeError(_redact(res.get("error", res)))
+                for x in res:
+                    if "result" in x:
+                        out[x["id"]] = x["result"]
                 break
-            except TypeError:
-                for k, p in enumerate(part):
-                    try:
-                        out[s + k] = rpc(method, p)
-                    except Exception:
-                        pass
-                break
+            except urllib.error.HTTPError as e:
+                if e.code == 429 and chunk > 2:
+                    chunk = max(2, chunk // 2)
+                    part = param_list[s:s + chunk]
+                    body = body[:chunk]
+                time.sleep(_sleep_for(e, i))
             except Exception as e:
                 time.sleep(_sleep_for(e, i))
+        s += len(part)
+        time.sleep(pause)
     return out
 
 
@@ -173,8 +176,8 @@ def enhanced_page(address, before=None, tx_type=None, limit=100, tries=8):
     last = None
     for i in range(tries):
         try:
-            _count("helius", "enhanced_transactions")
             r = _get(url)
+            _count("helius", "enhanced_transactions")
             return r, (r[-1]["signature"] if r else None)
         except urllib.error.HTTPError as e:
             body = ""

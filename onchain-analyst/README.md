@@ -6,7 +6,7 @@ Run each token in its own working directory (cache, prices and outputs land ther
 
 ```
 export PYTHONPATH=/path/to/onchain-analyst
-python -m pool <pool_address> <token_mint>        # stage 1a: rebuild every swap → trades.json
+python -m pool <token_mint> <pool> [<pool> ...]   # stage 1a: rebuild swaps (bonding curve + AMM) → trades.json
 python -m agg --pump-ts <unix_ts>                 # stage 1b/2: rank by %PnL, flag clusters/infra → candidates.json
 python -m funders <wallet> ...                    # stage 2: first funder, tx/day (bot check), shared txs
 python -m summ --cap 500 <wallet> ...             # stage 3 first pass (latest 500 txs)

@@ -1,5 +1,6 @@
 """Stage 1a: rebuild every swap in a pool from RPC.
-usage: python pool.py <pool_address> <token_mint>
+usage: python pool.py <token_mint> <pool_address> [<pool_address> ...]
+(pass the pump.fun bonding curve and the post-migration pool together)
 writes trades.json / other.json / meta.json in the current (run) directory.
 """
 import json, sys, time, urllib.request
@@ -24,41 +25,47 @@ def quote_price_fn(quote):
     if quote in vet.STABLE:
         return lambda t: 1.0
     gp = biggest_gt_pool(quote)
-    vet.add_quote(quote, gp, quote, pages=6)
+    vet.add_quote(quote, gp, quote, pages=15)
     return lambda t: vet._extra[quote].at(t) or 0
 
 
-def main(pool, mint):
-    pairs = [p for p in dexscreener(mint) if p['pairAddress'] == pool]
-    if not pairs:
-        sys.exit('pool not found on DexScreener for this mint')
-    pr = pairs[0]
-    quote = pr['quoteToken']['address'] if pr['baseToken']['address'] == mint else pr['baseToken']['address']
+def main(mint, pools):
+    allpairs = {x['pairAddress']: x for x in dexscreener(mint)}
     supply = rpc.rpc('getTokenSupply', [mint])['value']['uiAmount']
-    qp = quote_price_fn(quote)
     t0 = time.time()
-    recs = history.address_txs(pool)
-    print(f'{len(recs)} pool txs', file=sys.stderr)
-    trades, other = [], []
-    for r in recs:
-        d = r['deltas']; payer = r['payer']
-        pb, pq = d.get((pool, mint), 0), d.get((pool, quote), 0)
-        if pb * pq < 0:
-            side = 'buy' if pb < 0 else 'sell'
-            cands = [(v, o) for (o, m), v in d.items() if m == mint and o != pool]
-            v, o = (max(cands) if side == 'buy' else min(cands)) if cands else (0, payer)
-            if (side == 'buy' and v <= 0) or (side == 'sell' and v >= 0):
-                o = payer
-            usd = abs(pq) * qp(r['t'])
-            trades.append(dict(sig=r['sig'], slot=r['slot'], t=r['t'], side=side, wallet=o, payer=payer,
-                               tok=abs(pb), quote=abs(pq), usd=usd, mcap=usd / abs(pb) * supply))
-        elif pb or pq:
-            other.append(dict(sig=r['sig'], t=r['t'], payer=payer, d_tok=pb, d_quote=pq, note=r['note']))
+    trades, other, recs_all, info = [], [], [], []
+    for pool in pools:
+        pr = allpairs.get(pool)
+        if not pr:
+            sys.exit(f'pool {pool} not found on DexScreener for this mint')
+        quote = pr['quoteToken']['address'] if pr['baseToken']['address'] == mint else pr['baseToken']['address']
+        qp = quote_price_fn(quote)
+        recs = history.address_txs(pool)
+        recs_all += recs
+        info.append(dict(pool=pool, dex=pr['dexId'], quote=quote, txs=len(recs), liquidity_usd=pr.get('liquidity', {}).get('usd'),
+                         created_t=recs[0]['t'] if recs else None, created_slot=recs[0]['slot'] if recs else None))
+        print(f'{pool[:8]} {pr["dexId"]}: {len(recs)} txs', file=sys.stderr)
+        for r in recs:
+            d = r['deltas']; payer = r['payer']
+            pb = d.get((pool, mint), 0)
+            pq = d.get((pool, quote), 0) + (d.get((pool, 'native'), 0) if quote == vet.SOL else 0)
+            if pb * pq < 0:
+                side = 'buy' if pb < 0 else 'sell'
+                cands = [(v, o) for (o, m), v in d.items() if m == mint and o != pool]
+                v, o = (max(cands) if side == 'buy' else min(cands)) if cands else (0, payer)
+                if (side == 'buy' and v <= 0) or (side == 'sell' and v >= 0):
+                    o = payer
+                usd = abs(pq) * qp(r['t'])
+                trades.append(dict(sig=r['sig'], slot=r['slot'], t=r['t'], side=side, wallet=o, payer=payer, pool=pool,
+                                   tok=abs(pb), quote=abs(pq), usd=usd, mcap=usd / abs(pb) * supply))
+            elif pb:
+                other.append(dict(sig=r['sig'], t=r['t'], payer=payer, pool=pool, d_tok=pb, d_quote=pq, note=r['note']))
+    trades.sort(key=lambda x: (x['slot'], x['t']))
+    first = min((i for i in info if i['created_slot']), key=lambda i: i['created_slot'], default={})
     json.dump(trades, open('trades.json', 'w')); json.dump(other, open('other.json', 'w'))
-    meta = dict(pool=pool, mint=mint, quote=quote, supply=supply, pool_created_slot=recs[0]['slot'] if recs else None,
-                pool_created_t=recs[0]['t'] if recs else None, dex=pr['dexId'],
-                liquidity_usd=pr.get('liquidity', {}).get('usd'), mcap=pr.get('marketCap'),
-                vol24=pr.get('volume', {}).get('h24'))
+    meta = dict(mint=mint, supply=supply, pools=info, pool_created_slot=first.get('created_slot'),
+                pool_created_t=first.get('created_t'),
+                vol24=sum((allpairs[p].get('volume') or {}).get('h24') or 0 for p in pools))
     json.dump(meta, open('meta.json', 'w'))
     rpc.save_usage()
     print(json.dumps(dict(trades=len(trades), other=len(other), secs=round(time.time() - t0),
@@ -69,4 +76,4 @@ def main(pool, mint):
 
 
 if __name__ == '__main__':
-    main(sys.argv[1], sys.argv[2])
+    main(sys.argv[1], sys.argv[2:])
