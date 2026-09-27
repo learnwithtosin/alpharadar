@@ -11,7 +11,21 @@ python -m agg --pump-ts <unix_ts>                 # stage 1b/2: rank by %PnL, fl
 python -m funders <wallet> ...                    # stage 2: first funder, tx/day (bot check), shared txs
 python -m summ --cap 500 <wallet> ...             # stage 3 first pass (latest 500 txs)
 python -m summ <wallet> ...                       # stage 3 full 30 days
+python -m overlap <main_mint> <main_max_mcap> <alt_max_mcap>   # main+alt runner: wallets early on BOTH
 ```
+
+## Method that found the first Track wallet (Sep 27)
+
+Pick a token that has run for 1–2 days, done 10–20x+ and reached $1–2M mcap. If it belongs to a
+narrative with a main runner and an alt runner, look for wallets that got in early on **both**:
+
+1. In the alt token's run dir: `pool` (pre-pump window only for bot-heavy pools), then `agg --last-mcap <now>`.
+2. `overlap <main_mint> <main_max_mcap> <alt_max_mcap>` using the caller's entry mcaps as the ceilings.
+3. `summ --cap 500 --days 14` on the matches, then full 30 days only for survivors.
+4. Watch for "community bag" wallets: several matches holding the same other tokens is one crowd, not skill.
+
+Bot-heavy pools (arbitrage floods): count signatures first (1 credit / 1,000) and fetch only the window you need;
+the parsed API costs 1 credit per transaction whether it's a swap or arb noise.
 
 Data sources: Helius when `HELIUS_API_KEY` is set (parsed-transaction API, 100 tx per
 request; batched JSON-RPC), else public RPCs (api.mainnet-beta for full history, Tatum as
