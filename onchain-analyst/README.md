@@ -12,6 +12,8 @@ python -m funders <wallet> ...                    # stage 2: first funder, tx/da
 python -m summ --cap 500 <wallet> ...             # stage 3 first pass (latest 500 txs)
 python -m summ <wallet> ...                       # stage 3 full 30 days
 python -m overlap <main_mint> <main_max_mcap> <alt_max_mcap>   # main+alt runner: wallets early on BOTH
+python -m screen activity <pool.json>             # patient-trader screen, stage A (1 credit/wallet)
+python -m screen score activity.json              # stage B: 30d/7d win rate, hold, spread of profit; bar at top of screen.py
 ```
 
 ## Method that found the first Track wallet (Sep 27)
