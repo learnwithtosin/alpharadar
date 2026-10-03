@@ -42,9 +42,10 @@ def activity(pool_path):
         if i % 100 == 99:
             print(i + 1, 'checked', file=sys.stderr, flush=True)
     keep = {w: v for w, v in out.items() if MIN_TX_30D <= v['n30'] <= MAX_TX_30D}
-    json.dump(keep, open('activity.json', 'w'), indent=1)
+    out_path = 'activity_' + pool_path.rsplit('/', 1)[-1]
+    json.dump(keep, open(out_path, 'w'), indent=1)
     rpc.save_usage()
-    print(f'{len(out)} checked; {len(keep)} quiet-but-active (30d txs {MIN_TX_30D}-{MAX_TX_30D}); '
+    print(f'{len(out)} checked -> {out_path}; {len(keep)} quiet-but-active (30d txs {MIN_TX_30D}-{MAX_TX_30D}); '
           f'est. stage-B cost ~{sum(v["n30"] for v in keep.values())} credits')
 
 
@@ -112,7 +113,7 @@ def score(act_path):
         print(json.dumps(m), flush=True)
         if i % 20 == 19:
             rpc.save_usage()
-    json.dump(res, open('screen_results.json', 'w'), indent=1)
+    json.dump(res, open('scores_' + act_path.rsplit('/', 1)[-1], 'w'), indent=1)
     rpc.save_usage()
     ok = [m for m in res if not m['fails']]
     print(f'\n{len(res)} scored, {len(ok)} pass the patient-trader bar', file=sys.stderr)
