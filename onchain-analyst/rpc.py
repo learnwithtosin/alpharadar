@@ -226,7 +226,7 @@ def enhanced_page(address, before=None, tx_type=None, limit=100, tries=8):
             # With a type filter Helius may return 404 + a continuation signature
             if e.code == 404 and "before" in body:
                 import re
-                m = re.search(r"before[^A-Za-z0-9]+([1-9A-HJ-NP-Za-km-z]{60,90})", body)
+                m = re.search(r"([1-9A-HJ-NP-Za-km-z]{80,90})", body)
                 if m:
                     return [], m.group(1)
             last = f"HTTP {e.code} {body}"
