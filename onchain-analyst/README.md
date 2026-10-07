@@ -11,6 +11,7 @@ python -m agg --pump-ts <unix_ts>                 # stage 1b/2: rank by %PnL, fl
 python -m funders <wallet> ...                    # stage 2: first funder, tx/day (bot check), shared txs
 python -m summ --cap 500 <wallet> ...             # stage 3 first pass (latest 500 txs)
 python -m summ <wallet> ...                       # stage 3 full 30 days
+python -m exits <mint> [--min-buy 50]              # stage 1c: each early buyer's real full result, read from their own token account (busy pools)
 python -m overlap <main_mint> <main_max_mcap> <alt_max_mcap>   # main+alt runner: wallets early on BOTH
 python -m screen activity <pool.json>             # patient-trader screen, stage A (1 credit/wallet)
 python -m screen score activity.json              # stage B: 30d/7d win rate, hold, spread of profit; bar at top of screen.py
