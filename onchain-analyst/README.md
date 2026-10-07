@@ -26,8 +26,9 @@ narrative with a main runner and an alt runner, look for wallets that got in ear
 3. `summ --cap 500 --days 14` on the matches, then full 30 days only for survivors.
 4. Watch for "community bag" wallets: several matches holding the same other tokens is one crowd, not skill.
 
-Bot-heavy pools (arbitrage floods): count signatures first (1 credit / 1,000) and fetch only the window you need;
-the parsed API costs 1 credit per transaction whether it's a swap or arb noise.
+Bot-heavy pools (arbitrage floods): rebuild only the early window with `pool <mint> <curve> <pools...> --from <ts> --until <ts>`.
+It pages the parsed API oldest-first filtered to SWAP (100 credits per ≤100 swaps), so failed txs and arb spam are skipped.
+Pass the pump.fun bonding curve address too (from the mint's first tx); unlisted pools are treated as a SOL-quoted curve.
 
 Data sources: Helius when `HELIUS_API_KEY` is set (parsed-transaction API, 100 tx per
 request; batched JSON-RPC), else public RPCs (api.mainnet-beta for full history, Tatum as

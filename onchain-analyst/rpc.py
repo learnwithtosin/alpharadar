@@ -162,6 +162,44 @@ def get_json(url, tries=8, label="http"):
     raise RuntimeError(_redact(last))
 
 
+def enhanced_window(address, t0, t1, after=None, tx_type="SWAP", limit=100, tries=8):
+    """One page of Helius parsed transactions with t0 <= time < t1, OLDEST first, continuing
+    after signature `after`. The type filter skips failed/arb noise on flooded pools.
+    Returns (list, next_after)."""
+    if not KEY:
+        raise RuntimeError("HELIUS_API_KEY not set")
+    q = f"api-key={KEY}&limit={limit}&sort-order=asc&gte-time={t0}&lt-time={t1}"
+    if tx_type:
+        q += f"&type={tx_type}"
+    if after:
+        q += f"&after-signature={after}"
+    url = f"{HELIUS_API}/addresses/{address}/transactions?{q}"
+    last = None
+    for i in range(tries):
+        try:
+            r = _get(url)
+            _count("helius", "enhanced_transactions")
+            return r, (r[-1]["signature"] if r else None)
+        except urllib.error.HTTPError as e:
+            body = ""
+            try:
+                body = e.read().decode()[:400]
+            except Exception:
+                pass
+            # a filtered page with no matches may come back 404 + a signature to continue from
+            if e.code == 404:
+                import re
+                m = re.search(r"([1-9A-HJ-NP-Za-km-z]{80,90})", body)
+                _count("helius", "enhanced_transactions")
+                return [], (m.group(1) if m else None)
+            last = f"HTTP {e.code} {body}"
+            time.sleep(_sleep_for(e, i))
+        except Exception as e:
+            last = e
+            time.sleep(_sleep_for(e, i))
+    raise RuntimeError(_redact(last))
+
+
 def enhanced_page(address, before=None, tx_type=None, limit=100, tries=8):
     """One page of Helius parsed transactions for an address (newest first).
     Returns (list, next_before). Raises if no key."""

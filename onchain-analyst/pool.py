@@ -1,6 +1,8 @@
 """Stage 1a: rebuild every swap in a pool from RPC.
-usage: python pool.py <token_mint> <pool_address> [<pool_address> ...]
+usage: python pool.py <token_mint> <pool_address> [<pool_address> ...] [--from <unix ts>] [--until <unix ts>]
 (pass the pump.fun bonding curve and the post-migration pool together)
+--from/--until: rebuild only that window, oldest first (Helius). Use it on busy tokens: fetch
+the launch-to-first-pump window instead of paging back through every later swap.
 writes trades.json / other.json / meta.json in the current (run) directory.
 """
 import json, sys, time, urllib.request
@@ -29,18 +31,19 @@ def quote_price_fn(quote):
     return lambda t: vet._extra[quote].at(t) or 0
 
 
-def main(mint, pools):
+def main(mint, pools, w0=None, w1=None):
     allpairs = {x['pairAddress']: x for x in dexscreener(mint)}
     supply = rpc.rpc('getTokenSupply', [mint])['value']['uiAmount']
     t0 = time.time()
     trades, other, recs_all, info = [], [], [], []
     for pool in pools:
         pr = allpairs.get(pool)
-        if not pr:
-            sys.exit(f'pool {pool} not found on DexScreener for this mint')
+        if not pr:  # not listed: treat as the pump.fun bonding curve (native SOL quote)
+            print(f'{pool[:8]} not on DexScreener: treating it as a pump.fun bonding curve', file=sys.stderr)
+            pr = dict(dexId='pumpfun-curve', quoteToken=dict(address=vet.SOL), baseToken=dict(address=mint))
         quote = pr['quoteToken']['address'] if pr['baseToken']['address'] == mint else pr['baseToken']['address']
         qp = quote_price_fn(quote)
-        recs = history.address_txs(pool)
+        recs = history.window_txs(pool, w0 or 0, w1 or int(time.time()) + 60) if (w0 or w1) else history.address_txs(pool)
         recs_all += recs
         info.append(dict(pool=pool, dex=pr['dexId'], quote=quote, txs=len(recs), liquidity_usd=pr.get('liquidity', {}).get('usd'),
                          created_t=recs[0]['t'] if recs else None, created_slot=recs[0]['slot'] if recs else None))
@@ -65,7 +68,7 @@ def main(mint, pools):
     json.dump(trades, open('trades.json', 'w')); json.dump(other, open('other.json', 'w'))
     meta = dict(mint=mint, supply=supply, pools=info, pool_created_slot=first.get('created_slot'),
                 pool_created_t=first.get('created_t'),
-                vol24=sum((allpairs[p].get('volume') or {}).get('h24') or 0 for p in pools))
+                vol24=sum((allpairs.get(p, {}).get('volume') or {}).get('h24') or 0 for p in pools))
     json.dump(meta, open('meta.json', 'w'))
     rpc.save_usage()
     print(json.dumps(dict(trades=len(trades), other=len(other), secs=round(time.time() - t0),
@@ -76,4 +79,9 @@ def main(mint, pools):
 
 
 if __name__ == '__main__':
-    main(sys.argv[1], sys.argv[2:])
+    a = sys.argv[1:]
+    opt = {}
+    for k in ('--from', '--until'):
+        if k in a:
+            i = a.index(k); opt[k] = int(a[i + 1]); a = a[:i] + a[i + 2:]
+    main(a[0], a[1:], opt.get('--from'), opt.get('--until'))

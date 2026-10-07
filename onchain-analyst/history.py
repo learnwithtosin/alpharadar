@@ -210,6 +210,33 @@ def address_txs(addr, since=0):
     return [r for r in out if r["t"] >= since][::-1]
 
 
+def window_txs(addr, t0, t1, max_pages=400):
+    """Swaps touching addr with t0 <= time < t1, oldest first, same records as address_txs.
+    Helius parsed API filtered to SWAP (100 credits per page of up to 100 swaps): skips the
+    failed-tx and arbitrage floods that make busy pools expensive to page through."""
+    out, after = [], None
+    for page in range(max_pages):
+        fn = _path("win", addr, f"{t0}_{t1}_{after or 'head'}.json")
+        if os.path.exists(fn):
+            txs, nxt = json.load(open(fn))
+        else:
+            txs, nxt = rpc.enhanced_window(addr, t0, t1, after=after)
+            json.dump([txs, nxt], open(fn, "w"))
+        for tx in txs:
+            if not tx.get("transactionError"):
+                out.append(dict(sig=tx["signature"], t=tx["timestamp"], slot=tx["slot"], payer=tx.get("feePayer"),
+                                deltas=_deltas_enhanced(tx), note=f'{tx.get("type")}/{tx.get("source")}'))
+        if page % 20 == 19:
+            print(f"  {addr[:8]} window: {len(out)} swaps, at {time.strftime('%H:%M:%S', time.gmtime(out[-1]['t'])) if out else '-'}",
+                  file=sys.stderr, flush=True)
+            rpc.save_usage()
+        if not nxt or nxt == after:
+            break
+        after = nxt
+    seen = set()
+    return [r for r in out if not (r["sig"] in seen or seen.add(r["sig"]))]
+
+
 def wallet_history(w, days=30, cap=5000, now=None):
     """Normalized records for wallet w over the last `days` (newest first, ≤cap)."""
     since = int(now or time.time()) - days * 86400
